@@ -20,72 +20,77 @@ from tkinter import filedialog
 # =========================
 
 def abrir_workbooks():
-    """Abre o 1.xlsx da pasta escolhida e o XLSX correspondente em Desktop/FATURAMENTOS"""
+    """
+    Abre:
+    - 1.xlsx da pasta do NAVIO (selecionada pelo usuário)
+    - XLSX do CLIENTE em Desktop/FATURAMENTOS/<CLIENTE>.xlsx
+    """
 
-    # --- Seleção da pasta do 1.xlsx ---
+    # --- Seleção da pasta do navio ---
     root = tk.Tk()
     root.withdraw()
-    pasta = filedialog.askdirectory(title="Selecione a pasta com o 1.xlsx")
+    pasta_navio = filedialog.askdirectory(
+        title="Selecione a pasta do NAVIO (onde está o 1.xlsx)"
+    )
 
-    if not pasta:
+    if not pasta_navio:
         print("Nenhuma pasta selecionada. Encerrando.")
         return None, None, None, None, None
 
-    pasta = Path(pasta)
-    nome_pasta = pasta.name
+    pasta_navio = Path(pasta_navio)
+    pasta_cliente = pasta_navio.parent   # PASTA PAI
+    nome_cliente = pasta_cliente.name
 
-    arquivo1 = pasta / "1.xlsx"
+    arquivo1 = pasta_navio / "1.xlsx"
 
     pasta_faturamentos = Path.home() / "Desktop" / "FATURAMENTOS"
-    arquivo2 = pasta_faturamentos / f"{nome_pasta}.xlsx"
+    arquivo2 = pasta_faturamentos / f"{nome_cliente}.xlsx"
 
     app = xw.App(visible=False)
     wb1 = wb2 = None
 
     try:
-        # Valida existência dos arquivos
+        # --- Valida arquivos ---
         if not arquivo1.exists():
             raise FileNotFoundError(f"Arquivo 1.xlsx não encontrado:\n{arquivo1}")
 
         if not arquivo2.exists():
             raise FileNotFoundError(
-                f"Arquivo de faturamento não encontrado:\n{arquivo2}"
+                f"Arquivo de faturamento do cliente não encontrado:\n{arquivo2}"
             )
 
-        # Abre os arquivos
+        # --- Abre workbooks ---
         wb1 = app.books.open(arquivo1)
         wb2 = app.books.open(arquivo2)
 
         ws1 = wb1.sheets[0]
 
-        if nome_pasta in [s.name for s in wb2.sheets]:
-            ws_front = wb2.sheets[nome_pasta]
-        elif "FRONT VIGIA" in [s.name for s in wb2.sheets]:
+        nomes_abas = [s.name for s in wb2.sheets]
+
+        # Prioridade: aba com nome do cliente
+        if nome_cliente in nomes_abas:
+            ws_front = wb2.sheets[nome_cliente]
+
+        # Fallback: FRONT VIGIA
+        elif "FRONT VIGIA" in nomes_abas:
             ws_front = wb2.sheets["FRONT VIGIA"]
+
         else:
             raise RuntimeError(
-                f"Nenhuma aba válida encontrada. Esperado: '{nome_pasta}' ou 'FRONT VIGIA'."
-    )
+                f"Nenhuma aba válida encontrada no faturamento.\n"
+                f"Esperado: '{nome_cliente}' ou 'FRONT VIGIA'."
+            )
 
-            
         return app, wb1, wb2, ws1, ws_front
 
     except Exception as e:
         print(f"Erro ao abrir os arquivos: {e}")
-        if wb1:
-            wb1.close()
-        if wb2:
-            wb2.close()
-        app.quit()
-        return None, None, None, None, None
 
- 
-    except Exception as e:
-        print(f"Erro ao abrir os arquivos: {e}")
         if wb1:
             wb1.close()
         if wb2:
             wb2.close()
+
         app.quit()
         return None, None, None, None, None
 
@@ -113,8 +118,6 @@ def fechar_workbooks(app, wb1=None, wb2=None, arquivo_saida=None):
     finally:
         if app:
             app.quit()
-
-
 
 
 def data_online():
