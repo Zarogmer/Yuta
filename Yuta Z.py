@@ -342,16 +342,15 @@ def preencher_coluna_G_por_ciclo(ws_report, ciclos_linha, valores_por_ciclo, col
 
 def montar_datas_report_vigia(ws_report, ws_resumo, linha_inicial=22, periodos=None):
     """
-    Preenche a coluna C (DATE) do REPORT VIGIA.
+    Preenche a coluna C (DATE) do REPORT VIGIA com datas em inglês (texto).
     - Utiliza a função `obter_datas_extremos` para definir início e fim.
     - C22 recebe a primeira data.
     - O dia só avança a partir de C23 se o período (coluna E) for 00x06.
     """
-
     if periodos is None:
         raise ValueError("É necessário informar 'periodos' para preencher as datas")
 
-    # 1️⃣ Obter datas extremas da aba resumo
+    # Obter datas extremas da aba resumo
     data_inicio, data_fim = obter_datas_extremos(ws_resumo)
     if not data_inicio or not data_fim:
         raise ValueError("Não foi possível determinar as datas extremas na aba RESUMO")
@@ -365,8 +364,10 @@ def montar_datas_report_vigia(ws_report, ws_resumo, linha_inicial=22, periodos=N
         if periodo in (None, ""):
             break
 
-        # Colar a data na coluna C
-        ws_report.range(f"C{linha}").value = data_atual
+        # Colar a data formatada em inglês como TEXTO
+        cel = ws_report.range(f"C{linha}")
+        cel.number_format = '@'  # força Excel a tratar como texto
+        cel.value = formatar_data_ingles(data_atual)
 
         # Incrementa o dia somente a partir de C23 se período for 00x06
         if i > 0 and isinstance(periodo, str) and periodo.strip() == "00x06":
@@ -377,17 +378,26 @@ def montar_datas_report_vigia(ws_report, ws_resumo, linha_inicial=22, periodos=N
 
 
 
-
-
 def formatar_data_ingles(data):
     """
-    Recebe um objeto datetime e retorna uma string no formato 'MON DD, YYYY'.
+    Recebe um objeto date ou datetime e retorna uma string no formato 'MON DD, YYYY'.
     Exemplo: datetime(2026, 5, 25) -> 'MAY 25, 2026'
     """
-    if not isinstance(data, datetime):
-        raise ValueError("O parâmetro deve ser um objeto datetime")
-    
-    return data.strftime("%b %d, %Y").upper()  # %b = mês abreviado, .upper() deixa maiúsculo
+    from datetime import datetime, date
+
+    # Converter date para datetime se necessário
+    if isinstance(data, date) and not isinstance(data, datetime):
+        data = datetime(data.year, data.month, data.day)
+    elif not isinstance(data, datetime):
+        raise ValueError("O parâmetro deve ser um objeto date ou datetime")
+
+    # Meses em inglês
+    meses_ingles = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+                    "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
+
+    mes_str = meses_ingles[data.month - 1]
+    return f"{mes_str} {data.day}, {data.year}"
+
 
 
 
@@ -586,7 +596,7 @@ def main():
         # ========= 6 – NF =========
     escrever_nf(wb2, nome_navio, dn)
 
-    # ===== 7 – REPORT VIGIA =====
+# ===== 7 – REPORT VIGIA =====
     ws_report = wb2.sheets["REPORT VIGIA"]
 
     # 1️⃣ Calcular períodos
@@ -598,6 +608,7 @@ def main():
     # 3️⃣ Gerar lista cíclica de ciclos (coluna E)
     ciclos_linha = gerar_lista_ciclos_ciclica(periodos)
     preencher_coluna_E(ws_report, ciclos_linha, linha_inicial=22)
+
 
     # 4️⃣ Ler coluna Z do wb1 e agrupar por ciclo
     valores_por_ciclo = {"06x12": [], "12x18": [], "18x24": [], "00x06": []}
@@ -616,6 +627,11 @@ def main():
 
     # 5️⃣ Preencher coluna G seguindo a sequência de E
     preencher_coluna_G_por_ciclo(ws_report, ciclos_linha, valores_por_ciclo, coluna="G", linha_inicial=22)
+
+        # 6️⃣ Montar datas na coluna C com formatação em inglês
+# Preencher datas na coluna C do REPORT VIGIA
+    montar_datas_report_vigia(ws_report, ws1, linha_inicial=22, periodos=periodos)
+
 
     # 6️⃣ Garantir que data_inicio seja datetime
     if not isinstance(data_inicio, datetime):
