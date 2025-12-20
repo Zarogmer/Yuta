@@ -3,7 +3,6 @@ import xlwings as xw
 from datetime import datetime, timedelta, timezone
 from openpyxl.styles import Alignment
 import pandas as pd
-import locale
 import os
 import sys
 import urllib.request
@@ -13,7 +12,8 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog
 from datetime import date
-
+import re
+import locale
 
 
 # =========================
@@ -120,6 +120,19 @@ def fechar_workbooks(app, wb1=None, wb2=None, arquivo_saida=None):
         if app:
             app.quit()
 
+def obter_dn_da_pasta(caminho_arquivo):
+    """
+    Extrai números do nome da pasta do navio
+    Ex: '123 - NAVIO' -> '123'
+    """
+    pasta = os.path.basename(os.path.dirname(caminho_arquivo))
+
+    numeros = re.findall(r"\d+", pasta)
+
+    if not numeros:
+        return None
+
+    return numeros[0]  # primeiro bloco numérico
 
 
 def data_online():
@@ -177,6 +190,17 @@ def data_por_extenso(valor):
 
     return data.strftime("%d de %B de %Y")
 
+def MMO(arquivo1, wb2):
+    ws = wb2.sheets["REPORT VIGIA"]
+    if str(ws["E25"].value).strip().upper() != "MMO": return
+    df = pd.read_excel(arquivo1, sheet_name="Resumo", header=None)
+    col_g = df[6].dropna()
+    if col_g.empty: return
+    try:
+        ultimo_float = locale.atof(str(col_g.iloc[-1]).replace("R$", "").strip())
+    except: ultimo_float = float(col_g.iloc[-1])
+    ws["F25"].value = ultimo_float
+    ws["F25"].number_format = "#.##0,00"
 
 
 def processar_front(ws1, ws_front):
@@ -394,13 +418,6 @@ def montar_datas_report_vigia(ws_report, data_inicio, linha_inicial=23):
 
 
 
-
-
-
-
-
-
-
 def OC(arquivo1, wb2):
     ws = wb2.sheets["FRONT VIGIA"]
     if str(ws["G16"].value).strip().upper() == "O.C.:":
@@ -435,55 +452,102 @@ def arredondar_para_baixo_50(ws_front_vigia):
 # Programa principal
 # =========================
 
+def obter_nome_navio_da_pasta(caminho_arquivo):
+    """
+    Ex: '123 - NAVIO' -> 'NAVIO'
+    """
+    pasta = os.path.basename(os.path.dirname(caminho_arquivo))
 
-def obter_sheet_por_nome_parcial(wb, nome_procurado):
-    for s in wb.sheets:
-        if nome_procurado.lower() in s.name.lower():
-            return s
-    raise Exception(f"Aba contendo '{nome_procurado}' não encontrada")
+    if "-" in pasta:
+        return pasta.split("-", 1)[1].strip()
+
+    return pasta.strip()
+
+
+def obter_aba_nf_opcional(wb):
+    for sheet in wb.sheets:
+        nome = sheet.name.strip().lower()
+        if nome == "nf" or nome.startswith("nf") or "nota" in nome:
+            return sheet
+    return None
+
+def escrever_nf(wb_faturamento, nome_navio, dn):
+    # tenta localizar aba NF
+    ws_nf = None
+    for sheet in wb_faturamento.sheets:
+        if sheet.name.strip().lower() == "nf":
+            ws_nf = sheet
+            break
+
+    if ws_nf is None:
+        print("⚠️ Aba NF não encontrada — seguindo sem escrever NF")
+        return  # NÃO quebra o programa
+
+    ano = datetime.now().year
+
+    texto = (
+        f"SERVIÇO PRESTADO DE ATENDIMENTO/APOIO AO M/V {nome_navio}\n"
+        f"DN {dn}/{ano}"
+    )
+
+    # escreve na primeira célula
+    cel = ws_nf.range("A1")
+    cel.value = texto
+
+    # mescla para ficar bonito
+    ws_nf.range("A1:E2").merge()
+
+    # formatação
+    cel.api.HorizontalAlignment = -4108  # center
+    cel.api.VerticalAlignment = -4108
+    cel.api.WrapText = True
+    cel.api.Font.Name = "Calibri"
+    cel.api.Font.Size = 14
+    cel.api.Font.Bold = True
+
+    print("✅ Texto da NF escrito com sucesso")
+
 
 
 def main():
     print("🚀 Iniciando execução...")
 
-    # ========= 1 – Validar licença =========
-    try:
-        hoje_utc, hoje_local = data_online()
-        print(f"📅 Data local: {hoje_local.date()}")
+    # ========= 1 – Licença =========
+    hoje_utc, hoje_local = data_online()
+    limite = datetime(hoje_utc.year, hoje_utc.month, 22, tzinfo=timezone.utc)
+    if hoje_utc > limite:
+        sys.exit("⛔ Licença expirada")
 
-        limite = datetime(hoje_utc.year, hoje_utc.month, 22, tzinfo=timezone.utc)
-        if hoje_utc > limite:
-            sys.exit("⛔ Licença expirada")
-
-    except Exception as e:
-        sys.exit(f"Erro ao verificar licença: {e}")
+    print(f"📅 Data local: {hoje_local.date()}")
 
     # ========= 2 – Abrir arquivos =========
-    # 2 – Abrir arquivos
     app, wb1, wb2, ws1, ws_front = abrir_workbooks()
     if not all([app, wb1, wb2, ws1, ws_front]):
-        return
+        sys.exit("Erro ao abrir workbooks")
 
-    # 3 – Inputs do usuário
-    numero_dn = input("DN: ").strip()
+    print("📂 Workbooks abertos")
+
+    # ========= 3 – DN e Navio pela pasta =========
+    dn = obter_dn_da_pasta(wb1.fullname)
+    if not dn:
+        sys.exit("❌ DN não identificada pela pasta")
+
+        # 🔹 Nome do navio pela pasta
+    nome_navio = obter_nome_navio_da_pasta(wb1.fullname)
+
+    # 🔹 Colar no FRONT VIGIA (D15)
+    ws_front.range("D15").value = nome_navio
+
+
+    ws_front.range("C21").value = f"DN: {dn}/{datetime.now().year}"
+
+
+
+    # ========= 4 – Berço =========
     berco = input("WAREHOUSE / BERÇO: ").strip().upper()
-    ws_front["D18"].value = berco
+    ws_front.range("D18").value = berco
 
-    # DN SOMENTE NO FRONT VIGIA
-    valor_c21 = f"DN: {numero_dn}/25"
-    ws_front.range("C21").value = valor_c21
-
-    # 4 – Transferências iniciais
-    ws_front.range("D15").value = ws1.range("A2").value
-    ws_front.range("D16").value = data_por_extenso(ws1.range("B2").value)
-
-
-    print("📂 Workbooks abertos com sucesso")
-
-    # ========= 3 – FRONT (dados fixos) =========
-    ws_front.range("D15").value = ws1.range("A2").value
-
-    # ========= 4 – PROCESSAR FRONT =========
+    # ========= 5 – FRONT (OBRIGATÓRIO PRIMEIRO) =========
     print("⚙️ Processando FRONT VIGIA...")
     data_inicio, data_fim = processar_front(ws1, ws_front)
 
@@ -492,10 +556,18 @@ def main():
 
     print(f"📆 Datas extremas: {data_inicio} → {data_fim}")
 
-    # ========= 5 – REPORT VIGIA =========
+    #5.1 – MMO
+
+    print("⚙️ Processando MMO...")
+    MMO(wb1.fullname, wb2)
+
+    # ========= 6 – NF (AGORA SIM) =========
+    escrever_nf(wb2, nome_navio, dn)
+
+    # ========= 7 – REPORT =========
     ws_report = wb2.sheets["REPORT VIGIA"]
 
-    print("⚙️ Processando REPORT VIGIA (linhas, ciclos e valores)...")
+    print("⚙️ Processando REPORT VIGIA...")
     total_linhas = processar_report_completo(
         wb2,
         ws1,
@@ -504,60 +576,37 @@ def main():
         linha_inicial=22
     )
 
-    # ========= 6 – PREENCHER DATAS (C22 ↓) =========
+    # ========= 8 – Datas no REPORT (C22 ↓) =========
     print("🖊️ Preenchendo datas no REPORT VIGIA...")
-
     data_atual = data_inicio
     linha = 22
 
     while linha < 22 + total_linhas:
         turno = obter_turno(ws_report, linha)
 
-        if not turno:
-            linha += 1
-            continue
-
-        # escreve data na COLUNA C
-        ws_report.range(f"C{linha}").value = data_atual.strftime("%d/%m/%Y")
-
-        # se virar 00x06 → incrementa dia
-        if turno == "00x06":
-            data_atual += timedelta(days=1)
+        if turno:
+            ws_report.range(f"C{linha}").value = data_atual.strftime("%d/%m/%Y")
+            if turno == "00x06":
+                data_atual += timedelta(days=1)
 
         linha += 1
 
-    # ========= 7 – DEBUG FINAL =========
-    print("🔍 Turnos detectados:")
-    print(ws_report.range("C22:F40").value)
-
-    print("🔍 Datas escritas (C22:C40):")
-    print(ws_report.range("C22:C40").value)
-
-
-
+    # ========= 9 – OC / Financeiro =========
     OC(str(wb1.fullname), wb2)
+    credit_note(wb2, f"DN: {dn}/{datetime.now().year}")
+    quitacao(wb2, f"DN: {dn}/{datetime.now().year}")
 
-
-
-    # ❌ NÃO colar DN fora do FRONT VIGIA
-
-    credit_note(wb2, valor_c21)
-    quitacao(wb2, valor_c21)
-
-    # 6 – Ajustes finais
+    # ========= 10 – Ajustes finais =========
     arredondar_para_baixo_50(ws_front)
     cargonave(ws_front)
 
-    # Pasta do cliente (onde está o 1.xlsx)
     pasta_saida = Path(wb1.fullname).parent
     arquivo_saida = pasta_saida / "3.xlsx"
 
-    # NÃO salvar wb2 aqui
-    # wb2.save(arquivo_saida)  ❌ REMOVE ISSO
-
     fechar_workbooks(app, wb1, wb2, arquivo_saida)
 
-    print(f"Processo finalizado. Arquivo final salvo em: {arquivo_saida}")
+    print(f"✅ Processo finalizado: {arquivo_saida}")
+
 
 if __name__ == "__main__":
     
