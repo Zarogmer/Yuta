@@ -66,22 +66,6 @@ def formatar_coluna_c_data(ws, linha_inicial, periodos):
 
 
 
-def formatar_coluna_b_mes_extenso(ws, linha_inicial, periodos):
-    """
-    Formata SOMENTE as células existentes da coluna B no formato:
-    'May 25, 2025'
-    Sem criar linhas novas.
-    """
-    formato_custom = 'MMMM DD, YYYY'  # Mês extenso + dia + ano
-
-    for i in range(periodos):
-        linha = linha_inicial + i
-        celula = ws[f"B{linha}"]
-
-        # Formata apenas se a célula contém uma data válida
-        if hasattr(celula.value, "year"):
-            celula.number_format = formato_custom
-
 
 
 
@@ -90,7 +74,7 @@ def formatar_coluna_b_mes_extenso(ws, linha_inicial, periodos):
 
 
 try:
-    data_online()
+
     main()
     from pathlib import Path
 
@@ -110,35 +94,7 @@ try:
     # =========================
     # 1 – Transferências diretas (usando xlwings na FRONT VIGIA)
     # =========================
-    ws_front.range("D15").value = ws1.range("A2").value
-    ws_front.range("D16").value = data_por_extenso(ws1.range("B2").value)
-    periodo = ws1.range("D2").value
-    # =========================
-    # 3 – Inputs do usuário
-    # =========================
-    numero_dn = input("DN: ").strip()
-    berco = input("WAREHOUSE / BERÇO: ").strip().upper()
-    ws_front["D18"].value = berco
 
-    
-    
-    valor_c21 = f"DN: {numero_dn}/25"
-    valor_c21_quit = f"DN: {numero_dn}/25"
-
-    
-    
-    ws_front.range("C21").value = valor_c21
-
-    # =========================
-    # 4 – Se existir aba Quitação -> solicitar NF e gravar H21/H22
-    #        (mas SÓ perguntar se a aba existir)
-    # =========================
-    # Chamada corrigida
-
-
-    # 7 – REPORT VIGIA: clonar linha 22 para "periodos" vezes (preservando formatação)
-    #    Usamos xlwings para manipular planilha REPORT VIGIA via Excel (mantém shapes)
-    # =========================
     if "REPORT VIGIA" not in [s.name for s in wb2.sheets]:
         raise RuntimeError("Aba 'REPORT VIGIA' não encontrada em 2.xlsx")
 
