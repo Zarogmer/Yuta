@@ -14,7 +14,7 @@ from tkinter import filedialog
 from datetime import date
 import re
 import locale
-
+from itertools import cycle
 
 # =========================
 # Funções utilitárias
@@ -240,58 +240,12 @@ def processar_front(ws1, ws_front):
 
 # ===== Funções REPORT =====#
 
-def obter_periodos(arquivo1_path):
-    import pandas as pd
-    df = pd.read_excel(arquivo1_path, sheet_name="Resumo", header=None)
-    col_aa = df[26].dropna()
-    try:
-        periodos = int(float(str(col_aa.iloc[-1]).replace("R$", "").replace(",", ".").replace(" ", "")))
-    except:
-        periodos = 1
-    return periodos
-
-
-def gerar_lista_ciclos_ciclica(periodos):
-    """
-    Gera uma lista de ciclos repetindo a sequência fixa:
-    06x12 → 12x18 → 18x24 → 00x06
-    até atingir o número de periodos desejado.
-    """
-    sequencia = ["06x12", "12x18", "18x24", "00x06"]
-    lista = [sequencia[i % len(sequencia)] for i in range(periodos)]
-    return lista
-
-
-def preencher_coluna_E(ws_report, ciclos_linha, linha_inicial=22):
-    """
-    Preenche a coluna E do REPORT VIGIA a partir da linha 22
-    usando a lista de ciclos fornecida.
-    """
-    # Limpa o conteúdo antigo da faixa
-    ws_report.range(f"E{linha_inicial}:E{linha_inicial + len(ciclos_linha) - 1}").clear_contents()
-
-    # Preenche cada linha com o ciclo correspondente
-    for i, ciclo in enumerate(ciclos_linha):
-        linha = linha_inicial + i
-        cel = ws_report.range(f"E{linha}")
-        cel.value = ciclo
-        # Caso esteja mesclado, desfaz merge
-        try:
-            if cel.api.MergeCells:
-                cel.api.UnMerge()
-        except:
-            pass
-
-    return len(ciclos_linha)
-
-
 def inserir_linhas_report(ws_report, linha_inicial, periodos):
     """
-    Insere linhas no REPORT VIGIA para acomodar os períodos.
-    A linha inicial será copiada para manter estilos.
+    Insere linhas copiando a linha inicial para acomodar periodos > 1
     """
     if periodos <= 1:
-        return  # Não precisa inserir linhas se for só 1 período
+        return
 
     row_height = ws_report.api.Rows(linha_inicial).RowHeight
 
@@ -302,18 +256,105 @@ def inserir_linhas_report(ws_report, linha_inicial, periodos):
         ws_report.api.Rows(destino).RowHeight = row_height
 
 
+# ===== COLUNA E ===== #
+
+def obter_periodos(arquivo1_path):
+    df = pd.read_excel(arquivo1_path, sheet_name="Resumo", header=None)
+    col_aa = df[26].dropna()
+    try:
+        periodos = int(float(str(col_aa.iloc[-1]).replace("R$", "").replace(",", ".").replace(" ", "")))
+    except:
+        periodos = 1
+    return periodos
+
+
+def gerar_coluna_E_ajustada(ws1, periodos, coluna_horario="C"):
+    """
+    Gera a lista de ciclos para preencher a coluna E do REPORT VIGIA.
+    
+    - Se C3 for 06h, 12h, 18h ou 00h, começa a lista por este ciclo.
+    - Se C3 for "Total" ou vazio, assume primeiro ciclo 00x06 e continua a sequência normal.
+    - Repete a sequência até completar 'periodos'.
+    """
+    # Mapear horários para ciclos
+    horario_para_ciclo = {
+        "06h": "06x12", "06H": "06x12",
+        "12h": "12x18", "12H": "12x18",
+        "18h": "18x24", "18H": "18x24",
+        "00h": "00x06", "00H": "00x06"
+    }
+
+    # Sequência padrão completa
+    sequencia_padrao = ["06x12", "12x18", "18x24", "00x06"]
+
+    # Ler primeira e segunda células da coluna
+    primeiro_horario = str(ws1.range(f"{coluna_horario}2").value).strip()
+    segundo_valor = ws1.range(f"{coluna_horario}3").value
+    segundo_valor = str(segundo_valor).strip() if segundo_valor is not None else ""
+
+    # Determinar primeiro ciclo
+    if segundo_valor.lower() == "total" or segundo_valor not in horario_para_ciclo:
+        primeiro_ciclo = "00x06"  # primeiro ciclo é sempre 00x06
+    else:
+        primeiro_ciclo = horario_para_ciclo[segundo_valor]
+
+    # Rotacionar sequência padrão para iniciar pelo primeiro ciclo
+    idx_inicio = sequencia_padrao.index(primeiro_ciclo)
+    sequencia = sequencia_padrao[idx_inicio:] + sequencia_padrao[:idx_inicio]
+
+    # Gerar lista final até completar periodos
+    ciclos_linha = []
+    for c in cycle(sequencia):
+        if len(ciclos_linha) >= periodos:
+            break
+        ciclos_linha.append(c)
+
+    return ciclos_linha
+
+
+
+
+def preencher_coluna_E_por_ciclos(ws_report, ciclos_linha, linha_inicial=22):
+    for i, ciclo in enumerate(ciclos_linha):
+        ws_report.range(f"E{linha_inicial + i}").value = ciclo
+
+
+
+
+# ===== COLUNA G ===== #
+
+
+def mapear_valores_por_ciclo(ws1, coluna_horario="C", coluna_valor="Z"):
+    """
+    Lê os valores do wb1 e agrupa por ciclo.
+    ws1 : planilha do arquivo 1
+    coluna_horario : coluna que contém os horários (06h, 12h, etc.)
+    coluna_valor : coluna que contém os valores a preencher
+    """
+    horario_para_ciclo = {"06h":"06x12", "12h":"12x18", "18h":"18x24", "00h":"00x06"}
+    sequencia_ciclos = ["06x12", "12x18", "18x24", "00x06"]
+
+    last_row = ws1.used_range.last_cell.row
+    horarios = ws1.range(f"{coluna_horario}1:{coluna_horario}{last_row}").value
+    valores = ws1.range(f"{coluna_valor}1:{coluna_valor}{last_row}").value
+
+    # Normaliza horários para minúsculo
+    horarios = [str(h).strip().lower() if h is not None else None for h in horarios]
+
+    valores_por_ciclo = {c: [] for c in sequencia_ciclos}
+
+    for h, v in zip(horarios, valores):
+        if h in horario_para_ciclo:
+            ciclo = horario_para_ciclo[h]
+            valores_por_ciclo[ciclo].append(v)
+
+    return valores_por_ciclo
+
 def preencher_coluna_G_por_ciclo(ws_report, ciclos_linha, valores_por_ciclo, coluna="G", linha_inicial=22):
     """
     Preenche a coluna G do REPORT VIGIA alinhando os valores da coluna Z
     à sequência de ciclos já definida na coluna E.
-
-    ws_report : Sheet do REPORT VIGIA
-    ciclos_linha : lista de ciclos já preenchida na coluna E (ex: ['06x12', '12x18', ...])
-    valores_por_ciclo : dicionário {ciclo: [valores]} agrupando os valores da coluna Z
-    coluna : letra da coluna a preencher (default "G")
-    linha_inicial : primeira linha para preencher (default 22)
     """
-    # Controle de índice por ciclo
     indices_ciclo = {c: 0 for c in valores_por_ciclo}
 
     for i, ciclo_val in enumerate(ciclos_linha):
@@ -339,18 +380,18 @@ def preencher_coluna_G_por_ciclo(ws_report, ciclos_linha, valores_por_ciclo, col
 
     return len(ciclos_linha)
 
+# ===== COLUNA C ===== #
+
 
 def montar_datas_report_vigia(ws_report, ws_resumo, linha_inicial=22, periodos=None):
     """
-    Preenche a coluna C (DATE) do REPORT VIGIA com datas em inglês (texto).
-    - Utiliza a função `obter_datas_extremos` para definir início e fim.
-    - C22 recebe a primeira data.
-    - O dia só avança a partir de C23 se o período (coluna E) for 00x06.
+    Preenche a coluna C (DATE) do REPORT VIGIA.
+    - O dia só avança quando o ciclo da coluna E for 00x06.
+    - Mantém a sequência correta independentemente do primeiro horário.
     """
     if periodos is None:
         raise ValueError("É necessário informar 'periodos' para preencher as datas")
 
-    # Obter datas extremas da aba resumo
     data_inicio, data_fim = obter_datas_extremos(ws_resumo)
     if not data_inicio or not data_fim:
         raise ValueError("Não foi possível determinar as datas extremas na aba RESUMO")
@@ -359,54 +400,28 @@ def montar_datas_report_vigia(ws_report, ws_resumo, linha_inicial=22, periodos=N
 
     for i in range(periodos):
         linha = linha_inicial + i
-        periodo = ws_report.range(f"E{linha}").value  # coluna E = ciclos
+        ciclo = ws_report.range(f"E{linha}").value
 
-        if periodo in (None, ""):
+        if ciclo in (None, ""):
             break
 
-        # Colar a data formatada em inglês como TEXTO
-        cel = ws_report.range(f"C{linha}")
-        cel.number_format = '@'  # força Excel a tratar como texto
-        cel.value = formatar_data_ingles(data_atual)
+        # Coloca a data atual na coluna C
+        ws_report.range(f"C{linha}").value = data_atual
 
-        # Incrementa o dia somente a partir de C23 se período for 00x06
-        if i > 0 and isinstance(periodo, str) and periodo.strip() == "00x06":
+        # Se o ciclo for 00x06, incrementa o dia para a próxima linha
+        if isinstance(ciclo, str) and ciclo.strip().lower() == "00x06":
             data_atual += timedelta(days=1)
 
     return periodos
 
 
-
-
-def formatar_data_ingles(data):
-    """
-    Recebe um objeto date ou datetime e retorna uma string no formato 'MON DD, YYYY'.
-    Exemplo: datetime(2026, 5, 25) -> 'MAY 25, 2026'
-    """
-    from datetime import datetime, date
-
-    # Converter date para datetime se necessário
-    if isinstance(data, date) and not isinstance(data, datetime):
-        data = datetime(data.year, data.month, data.day)
-    elif not isinstance(data, datetime):
-        raise ValueError("O parâmetro deve ser um objeto date ou datetime")
-
-    # Meses em inglês
-    meses_ingles = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN",
-                    "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
-
-    mes_str = meses_ingles[data.month - 1]
-    return f"{mes_str} {data.day}, {data.year}"
-
-
-
+# ===== DATA INICIAL E FINAL DO FRONT =====#
 
 MESES_EN = {
     1: "JAN", 2: "FEB", 3: "MAR", 4: "APR",
     5: "MAY", 6: "JUN", 7: "JUL", 8: "AUG",
     9: "SEP", 10: "OCT", 11: "NOV", 12: "DEC"
 }
-
 
 def obter_datas_extremos(ws_resumo):
     last_row = ws_resumo.used_range.last_cell.row
@@ -459,6 +474,9 @@ def obter_datas_extremos(ws_resumo):
     return min(datas), max(datas)
 
 
+# ===== ABAS ESPECIFICAS =====#
+
+
 def OC(arquivo1, wb2):
     ws = wb2.sheets["FRONT VIGIA"]
     if str(ws["G16"].value).strip().upper() == "O.C.:":
@@ -489,7 +507,6 @@ def arredondar_para_baixo_50(ws_front_vigia):
     except: return
     ws_front_vigia.range("H28").value = resultado
 
-
 def obter_nome_navio_da_pasta(caminho_arquivo):
     """
     Ex: '123 - NAVIO' -> 'NAVIO'
@@ -500,7 +517,6 @@ def obter_nome_navio_da_pasta(caminho_arquivo):
         return pasta.split("-", 1)[1].strip()
 
     return pasta.strip()
-
 
 def obter_aba_nf_opcional(wb):
     for sheet in wb.sheets:
@@ -545,8 +561,6 @@ def escrever_nf(wb_faturamento, nome_navio, dn):
 
     print("✅ Texto da NF escrito com sucesso")
 
-
-
 def main():
     print("🚀 Iniciando execução...")
 
@@ -579,8 +593,8 @@ def main():
     ws_front.range("D15").value = nome_navio
     ws_front.range("C21").value = texto_dn
 
-    berco = input("WAREHOUSE / BERÇO: ").strip().upper()
-    ws_front["D18"].value = berco
+#    berco = input("WAREHOUSE / BERÇO: ").strip().upper()
+#    ws_front["D18"].value = berco
 
     # ========= 4 – FRONT (OBRIGATÓRIO PRIMEIRO) =========
     print("⚙️ Processando FRONT VIGIA...")
@@ -593,71 +607,51 @@ def main():
     print("⚙️ Processando MMO...")
     MMO(wb1.fullname, wb2)
 
-        # ========= 6 – NF =========
+    # ========= 6 – NF =========
     escrever_nf(wb2, nome_navio, dn)
 
-# ===== 7 – REPORT VIGIA =====
+    # ===== 7 – REPORT VIGIA =====
+    ws_resumo = wb1.sheets["Resumo"]
     ws_report = wb2.sheets["REPORT VIGIA"]
 
-    # 1️⃣ Calcular períodos
+    # 1️⃣ Obter quantidade de períodos
     periodos = obter_periodos(wb1.fullname)
 
-    # 2️⃣ Inserir linhas no report
+    # 2️⃣ Inserir linhas extras se necessário
     inserir_linhas_report(ws_report, linha_inicial=22, periodos=periodos)
 
-    # 3️⃣ Gerar lista cíclica de ciclos (coluna E)
-    ciclos_linha = gerar_lista_ciclos_ciclica(periodos)
-    preencher_coluna_E(ws_report, ciclos_linha, linha_inicial=22)
+    # 3️⃣ Gerar lista de ciclos confiável (coluna E)
+    ciclos_linha = gerar_coluna_E_ajustada(ws1, periodos, coluna_horario="C")
+
+    # 4️⃣ Preencher coluna E do REPORT VIGIA
+    preencher_coluna_E_por_ciclos(ws_report, ciclos_linha, linha_inicial=22)
 
 
-    # 4️⃣ Ler coluna Z do wb1 e agrupar por ciclo
-    valores_por_ciclo = {"06x12": [], "12x18": [], "18x24": [], "00x06": []}
-    dadosC = ws1.range("C2").options(expand='down').value
-    dadosZ = ws1.range("Z2").options(expand='down').value
-    if not isinstance(dadosC, list): dadosC = [dadosC] if dadosC else []
-    if not isinstance(dadosZ, list): dadosZ = [dadosZ] if dadosZ else []
+    # 5️⃣ Mapear valores do wb1 por ciclo (coluna G)
+    valores_por_ciclo = mapear_valores_por_ciclo(ws1, coluna_horario="C", coluna_valor="Z")
 
-    mapa_horario = {"00h": "00x06", "06h": "06x12", "12h": "12x18", "18h": "18x24"}
-    for c_val, z_val in zip(dadosC, dadosZ):
-        if c_val is None or pd.isna(z_val):
-            continue
-        ciclo = mapa_horario.get(str(c_val).strip().lower())
-        if ciclo and str(z_val).strip().upper() != "TOTAL":
-            valores_por_ciclo[ciclo].append(z_val)
-
-    # 5️⃣ Preencher coluna G seguindo a sequência de E
+    # 6️⃣ Preencher coluna G do REPORT VIGIA
     preencher_coluna_G_por_ciclo(ws_report, ciclos_linha, valores_por_ciclo, coluna="G", linha_inicial=22)
 
-        # 6️⃣ Montar datas na coluna C com formatação em inglês
-    # Preencher datas na coluna C do REPORT VIGIA
-    montar_datas_report_vigia(ws_report, ws1, linha_inicial=22, periodos=periodos)
+    # 7️⃣ Preencher coluna C (datas) respeitando ciclos 00x06
+    montar_datas_report_vigia(
+        ws_report=ws_report,
+        ws_resumo=ws_resumo,
+    linha_inicial=22,
+    periodos=periodos
+)
 
 
-    # 6️⃣ Garantir que data_inicio seja datetime
+
+    # 7️⃣ Garantir que data_inicio seja datetime
     if not isinstance(data_inicio, datetime):
         try:
             data_inicio = pd.to_datetime(data_inicio)
         except Exception as e:
             raise ValueError(f"data_inicio inválida: {data_inicio}") from e
 
-    # 7️⃣ Montar datas na coluna C com formatação em inglês
-    data_atual = data_inicio
-    for i in range(periodos):
-        linha = 22 + i
-        periodo = ws_report.range(f"E{linha}").value
 
-        if periodo in (None, ""):
-            break
-
-        # Colar data formatada em inglês
-        ws_report.range(f"C{linha}").value = formatar_data_ingles(data_atual)
-
-        # Incrementa o dia apenas a partir de C23 se período for 00x06
-        if i > 0 and isinstance(periodo, str) and periodo.strip() == "00x06":
-            data_atual += timedelta(days=1)
-
-
-        # ========= 8 – Financeiro =========
+    # ========= 8 – Financeiro =========
     OC(str(wb1.fullname), wb2)
     credit_note(wb2, texto_dn)
     quitacao(wb2, texto_dn)
@@ -677,5 +671,5 @@ def main():
 if __name__ == "__main__":
     
     main()
-    
+
 # Fim do código
