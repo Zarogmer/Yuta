@@ -20,30 +20,37 @@ from itertools import cycle
 # Funções utilitárias
 # =========================
 
+# 🔴 DEFINA AQUI O CAMINHO FIXO (LOCAL OU REDE)
+PASTA_FATURAMENTOS = Path(
+    r"\\SERVIDOR\CentralDeDocumentos\01. FATURAMENTOS\FATURAMENTOS"
+)
+
+# Ex local:
+# PASTA_FATURAMENTOS = Path(r"D:\EMPRESA\FATURAMENTOS")
+
 def abrir_workbooks():
     """
     Abre:
     - 1.xlsx da pasta do NAVIO (selecionada pelo usuário)
-    - XLSX do CLIENTE em Desktop/FATURAMENTOS/<CLIENTE>.xlsx
+    - XLSX do CLIENTE em FATURAMENTOS fixo
     """
 
-    # --- Seleção da pasta do navio ---
     root = tk.Tk()
     root.withdraw()
+
+    # 1️⃣ Seleciona pasta do NAVIO (rede ou local)
     pasta_navio = filedialog.askdirectory(
         title="Selecione a pasta do NAVIO (onde está o 1.xlsx)"
     )
 
     if not pasta_navio:
-        print("Nenhuma pasta selecionada. Encerrando.")
         return None, None, None, None, None
 
     pasta_navio = Path(pasta_navio)
-    pasta_cliente = pasta_navio.parent   # PASTA PAI
+    pasta_cliente = pasta_navio.parent
     nome_cliente = pasta_cliente.name
 
     arquivos_1 = list(pasta_navio.glob("1*.xls*"))
-
     if not arquivos_1:
         raise FileNotFoundError(
             f"Nenhum arquivo começando com '1' encontrado em:\n{pasta_navio}"
@@ -51,23 +58,18 @@ def abrir_workbooks():
 
     arquivo1 = arquivos_1[0]
 
-    pasta_faturamentos = Path.home() / "Desktop" / "FATURAMENTOS"
-    arquivo2 = pasta_faturamentos / f"{nome_cliente}.xlsx"
+    # 2️⃣ Arquivo FATURAMENTO (CAMINHO FIXO)
+    arquivo2 = PASTA_FATURAMENTOS / f"{nome_cliente}.xlsx"
 
     app = xw.App(visible=False)
     wb1 = wb2 = None
 
     try:
-        # --- Valida arquivos ---
-        if not arquivo1.exists():
-            raise FileNotFoundError(f"Arquivo 1.xlsx não encontrado:\n{arquivo1}")
-
         if not arquivo2.exists():
             raise FileNotFoundError(
-                f"Arquivo de faturamento do cliente não encontrado:\n{arquivo2}"
+                f"Arquivo de faturamento não encontrado:\n{arquivo2}"
             )
 
-        # --- Abre workbooks ---
         wb1 = app.books.open(arquivo1)
         wb2 = app.books.open(arquivo2)
 
@@ -75,32 +77,25 @@ def abrir_workbooks():
 
         nomes_abas = [s.name for s in wb2.sheets]
 
-        # Prioridade: aba com nome do cliente
         if nome_cliente in nomes_abas:
             ws_front = wb2.sheets[nome_cliente]
-
-        # Fallback: FRONT VIGIA
         elif "FRONT VIGIA" in nomes_abas:
             ws_front = wb2.sheets["FRONT VIGIA"]
-
         else:
             raise RuntimeError(
-                f"Nenhuma aba válida encontrada no faturamento.\n"
-                f"Esperado: '{nome_cliente}' ou 'FRONT VIGIA'."
+                f"Nenhuma aba válida encontrada.\n"
+                f"Esperado: '{nome_cliente}' ou 'FRONT VIGIA'"
             )
 
         return app, wb1, wb2, ws1, ws_front
 
     except Exception as e:
-        print(f"Erro ao abrir os arquivos: {e}")
-
         if wb1:
             wb1.close()
         if wb2:
             wb2.close()
-
         app.quit()
-        return None, None, None, None, None
+        raise e
 
     
 def fechar_workbooks(app, wb1=None, wb2=None, arquivo_saida=None):
@@ -142,6 +137,9 @@ def obter_dn_da_pasta(caminho_arquivo):
     return numeros[0]  # primeiro bloco numérico
 
 
+# ===== Licença =====#
+
+
 def data_online():
     context = ssl.create_default_context(cafile=certifi.where())
 
@@ -153,29 +151,45 @@ def data_online():
     with urllib.request.urlopen(req, context=context, timeout=5) as r:
         data_str = r.headers["Date"]
 
-    # transforma em datetime UTC do servidor
-    dt_utc = datetime.strptime(data_str, "%a, %d %b %Y %H:%M:%S %Z").replace(tzinfo=timezone.utc)
+    dt_utc = datetime.strptime(
+        data_str, "%a, %d %b %Y %H:%M:%S %Z"
+    ).replace(tzinfo=timezone.utc)
 
-    # para uso interno/exibição: converte para hora local
-    dt_local = dt_utc.astimezone()  # pega fuso local do sistema
+    dt_local = dt_utc.astimezone()
     return dt_utc, dt_local
 
-try:
+
+def validar_licenca():
     hoje_utc, hoje_local = data_online()
 
-    # validação sempre UTC
-    data_limite_utc = datetime(hoje_utc.year, hoje_utc.month, 22, tzinfo=timezone.utc)
-    if hoje_utc > data_limite_utc:
+    limite = datetime(hoje_utc.year, hoje_utc.month, 30, tzinfo=timezone.utc)
+def data_online():
+    context = ssl.create_default_context(cafile=certifi.where())
+
+    req = urllib.request.Request(
+        "https://www.cloudflare.com",
+        headers={"User-Agent": "Mozilla/5.0"}
+    )
+
+    with urllib.request.urlopen(req, context=context, timeout=5) as r:
+        data_str = r.headers["Date"]
+
+    dt_utc = datetime.strptime(
+        data_str, "%a, %d %b %Y %H:%M:%S %Z"
+    ).replace(tzinfo=timezone.utc)
+
+    dt_local = dt_utc.astimezone()
+    return dt_utc, dt_local
+
+
+def validar_licenca():
+    hoje_utc, hoje_local = data_online()
+
+    limite = datetime(hoje_utc.year, hoje_utc.month, 30, tzinfo=timezone.utc)
+    if hoje_utc > limite:
         sys.exit("⛔ Licença expirada")
 
-    # apenas exibição: sempre local
-    print("Data local:", hoje_local.date())
-
-
-except Exception as e:
-    sys.exit(f"Erro ao verificar licença: {e}")
-
-    sys.exit("❌ Não foi possível validar a data online")
+    print(f"📅 Data local: {hoje_local.date()}")
 
 
 
@@ -258,14 +272,21 @@ def inserir_linhas_report(ws_report, linha_inicial, periodos):
 
 # ===== COLUNA E ===== #
 
-def obter_periodos(arquivo1_path):
-    df = pd.read_excel(arquivo1_path, sheet_name="Resumo", header=None)
-    col_aa = df[26].dropna()
+def obter_periodos(ws_resumo):
+    """
+    Lê a coluna AA da aba Resumo usando xlwings
+    (sem pandas, sem conflito de arquivo)
+    """
+    valores = ws_resumo.range("AA:AA").value
+
+    # Remove None
+    valores = [v for v in valores if v is not None]
+
     try:
-        periodos = int(float(str(col_aa.iloc[-1]).replace("R$", "").replace(",", ".").replace(" ", "")))
+        ultimo = str(valores[-1]).replace("R$", "").replace(",", ".").strip()
+        return int(float(ultimo))
     except:
-        periodos = 1
-    return periodos
+        return 1
 
 
 def gerar_coluna_E_ajustada(ws1, periodos, coluna_horario="C"):
@@ -312,15 +333,12 @@ def gerar_coluna_E_ajustada(ws1, periodos, coluna_horario="C"):
     return ciclos_linha
 
 
-
-
 def preencher_coluna_E_por_ciclos(ws_report, ciclos_linha, linha_inicial=22):
     for i, ciclo in enumerate(ciclos_linha):
         ws_report.range(f"E{linha_inicial + i}").value = ciclo
 
 
-
-
+ 
 # ===== COLUNA G ===== #
 
 
@@ -564,14 +582,9 @@ def escrever_nf(wb_faturamento, nome_navio, dn):
 def main():
     print("🚀 Iniciando execução...")
 
-    # ========= 1 – Licença =========
-    hoje_utc, hoje_local = data_online()
-    limite = datetime(hoje_utc.year, hoje_utc.month, 22, tzinfo=timezone.utc)
+    # ========== 1 - Licença ========== #
 
-    if hoje_utc > limite:
-        sys.exit("⛔ Licença expirada")
-
-    print(f"📅 Data local: {hoje_local.date()}")
+    validar_licenca()
 
     # ========= 2 – Abrir arquivos =========
     app, wb1, wb2, ws1, ws_front = abrir_workbooks()
@@ -593,8 +606,8 @@ def main():
     ws_front.range("D15").value = nome_navio
     ws_front.range("C21").value = texto_dn
 
-#    berco = input("WAREHOUSE / BERÇO: ").strip().upper()
-#    ws_front["D18"].value = berco
+    berco = input("WAREHOUSE / BERÇO: ").strip().upper()
+    ws_front["D18"].value = berco
 
     # ========= 4 – FRONT (OBRIGATÓRIO PRIMEIRO) =========
     print("⚙️ Processando FRONT VIGIA...")
@@ -612,10 +625,9 @@ def main():
 
     # ===== 7 – REPORT VIGIA =====
     ws_resumo = wb1.sheets["Resumo"]
-    ws_report = wb2.sheets["REPORT VIGIA"]
+    periodos = obter_periodos(ws_resumo)
 
-    # 1️⃣ Obter quantidade de períodos
-    periodos = obter_periodos(wb1.fullname)
+    ws_report = wb2.sheets["REPORT VIGIA"]
 
     # 2️⃣ Inserir linhas extras se necessário
     inserir_linhas_report(ws_report, linha_inicial=22, periodos=periodos)
@@ -654,7 +666,7 @@ def main():
     # ========= 8 – Financeiro =========
     OC(str(wb1.fullname), wb2)
     credit_note(wb2, texto_dn)
-    quitacao(wb2, texto_dn)
+#    quitacao(wb2, texto_dn)
 
     # ========= 10 – Ajustes finais =========
     arredondar_para_baixo_50(ws_front)
