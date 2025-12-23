@@ -10,142 +10,65 @@ import ssl
 import certifi
 from pathlib import Path
 import tkinter as tk
+from tkinter import filedialog
 from datetime import date
 import re
 import locale
 from itertools import cycle
-from tkinter import Tk, filedialog
-import shutil
-import tempfile
 
 # =========================
 # Funções utilitárias
 # =========================
 
+# 🔴 DEFINA AQUI O CAMINHO FIXO (LOCAL OU REDE)
+PASTA_FATURAMENTOS = Path(r"C:\Users\Guilherme\OneDrive\Documentos\FATURAMENTOS")
+# Ex local:
+# PASTA_FATURAMENTOS = Path(r"D:\EMPRESA\FATURAMENTOS")
 
-
-
-def copiar_para_temp_e_ler_excel(caminho_original: Path | str) -> pd.DataFrame:
-    """
-    Copia o arquivo para pasta temporária local e lê com pandas.
-    Resolve a maioria dos PermissionError em pastas OneDrive/rede.
-    """
-    caminho_original = Path(caminho_original)
-    if not caminho_original.exists():
-        raise FileNotFoundError(f"Arquivo não encontrado: {caminho_original}")
-
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_dir_path = Path(temp_dir)
-        caminho_temp = temp_dir_path / caminho_original.name
-
-        print(f"Copiando {caminho_original.name} para pasta temporária local...")
-        shutil.copy2(caminho_original, caminho_temp)
-
-        print(f"Lendo arquivo temporário: {caminho_temp}")
-        df = pd.read_excel(caminho_temp, engine="openpyxl")  # engine explícito ajuda
-
-    return df
-
-def obter_pasta_faturamentos() -> Path:
-    """
-    Localiza automaticamente a pasta FATURAMENTOS dentro da estrutura OneDrive da SANPORT.
-    Funciona mesmo com espaços e hífens no nome da pasta.
-    """
-    print("\n=== BUSCANDO PASTA FATURAMENTOS AUTOMATICAMENTE ===")
-
-    # Possíveis locais base onde o OneDrive sincroniza a pasta da empresa
-    possiveis_bases = [
-        Path(r"C:\Users\Carol\SANPORT LOGÍSTICA PORTUÁRIA LTDA"),
-        Path(r"C:\Users\Carol\OneDrive - SANPORT LOGÍSTICA PORTUÁRIA LTDA"),  # caso seja OneDrive pessoal
-        Path.home() / "SANPORT LOGÍSTICA PORTUÁRIA LTDA",
-        Path.home() / "OneDrive" / "SANPORT LOGÍSTICA PORTUÁRIA LTDA",
-    ]
-
-    caminho_alvo = None
-
-    for base in possiveis_bases:
-        if base.exists():
-            print(f"✅ Encontrada pasta base: {base}")
-
-            # Procurar recursivamente por uma pasta chamada "FATURAMENTOS" dentro de "01. FATURAMENTOS"
-            candidatos = list(base.rglob("FATURAMENTOS"))
-            for candidato in candidatos:
-                # Filtrar para garantir que está dentro de "01. FATURAMENTOS"
-                if "01. FATURAMENTOS" in candidato.parent.as_posix():
-                    caminho_alvo = candidato
-                    print(f"✅ Pasta FATURAMENTOS encontrada em:\n   {caminho_alvo}")
-                    break
-
-            if caminho_alvo:
-                break
-        else:
-            print(f"❌ Não encontrada: {base}")
-
-    if not caminho_alvo:
-        print("❌ Pasta FATURAMENTOS não foi encontrada automaticamente.")
-        print("\nPossíveis soluções:")
-        print("• Verifique se o OneDrive está sincronizando a pasta da empresa")
-        print("• Clique com botão direito na pasta FATURAMENTOS → Propriedades → Localização")
-        print("  e me diga o caminho exato que aparece")
-        raise FileNotFoundError("Pasta FATURAMENTOS não localizada automaticamente")
-
-    # Debug final: listar alguns arquivos para confirmar
-    print(f"\nArquivos .xlsx encontrados na pasta ({len(list(caminho_alvo.glob('*.xlsx')))}):")
-    for arq in sorted(caminho_alvo.glob("*.xlsx"))[:10]:  # mostra só os 10 primeiros
-        print(f"   • {arq.name}")
-    if len(list(caminho_alvo.glob("*.xlsx"))) > 10:
-        print("   ... (mais arquivos)")
-
-    print("========================================\n")
-    return caminho_alvo
-
-
-def abrir_workbooks(pasta_faturamentos: Path):
+def abrir_workbooks():
     """
     Abre:
-    - 1.xlsx (ou similar) da pasta do NAVIO selecionada pelo usuário
-    - XLSX do cliente na pasta FATURAMENTOS
+    - 1.xlsx da pasta do NAVIO (selecionada pelo usuário)
+    - XLSX do CLIENTE em FATURAMENTOS fixo
     """
+
     root = tk.Tk()
     root.withdraw()
 
-    # 1️⃣ Usuário seleciona a pasta do NAVIO
-    pasta_navio_str = filedialog.askdirectory(
+    # 1️⃣ Seleciona pasta do NAVIO (rede ou local)
+    pasta_navio = filedialog.askdirectory(
         title="Selecione a pasta do NAVIO (onde está o 1.xlsx)"
     )
 
-    if not pasta_navio_str:
-        print("Seleção cancelada pelo usuário.")
+    if not pasta_navio:
         return None, None, None, None, None
 
-    pasta_navio = Path(pasta_navio_str)
+    pasta_navio = Path(pasta_navio)
     pasta_cliente = pasta_navio.parent
-    nome_cliente = pasta_cliente.name.strip()  # remove espaços acidentais
+    nome_cliente = pasta_cliente.name
 
-    # Procura arquivo que começa com "1" (1.xlsx, 1.xls, etc.)
     arquivos_1 = list(pasta_navio.glob("1*.xls*"))
     if not arquivos_1:
-        raise FileNotFoundError(f"Nenhum arquivo iniciando com '1' encontrado em:\n{pasta_navio}")
+        raise FileNotFoundError(
+            f"Nenhum arquivo começando com '1' encontrado em:\n{pasta_navio}"
+        )
 
-    arquivo1 = arquivos_1[0]  # pega o primeiro (se tiver mais de um, pode melhorar depois)
+    arquivo1 = arquivos_1[0]
 
-    # 2️⃣ Arquivo de faturamento do cliente (caminho fixo)
-    arquivo2 = pasta_faturamentos / f"{nome_cliente}.xlsx"
-
-    if not arquivo2.exists():
-        raise FileNotFoundError(f"Arquivo de faturamento não encontrado:\n{arquivo2}")
-
-    print(f"Abrindo com xlwings:")
-    print(f"• NAVIO:  {arquivo1}")
-    print(f"• CLIENTE: {arquivo2}")
+    # 2️⃣ Arquivo FATURAMENTO (CAMINHO FIXO)
+    arquivo2 = PASTA_FATURAMENTOS / f"{nome_cliente}.xlsx"
 
     app = xw.App(visible=False)
     wb1 = wb2 = None
 
     try:
-        # Aqui você pode usar xlwings direto, mas se quiser evitar lock, pode copiar também:
-        wb1 = app.books.open(str(arquivo1))
-        wb2 = app.books.open(str(arquivo2))
+        if not arquivo2.exists():
+            raise FileNotFoundError(
+                f"Arquivo de faturamento não encontrado:\n{arquivo2}"
+            )
+
+        wb1 = app.books.open(arquivo1)
+        wb2 = app.books.open(arquivo2)
 
         ws1 = wb1.sheets[0]
 
@@ -168,9 +91,10 @@ def abrir_workbooks(pasta_faturamentos: Path):
             wb1.close()
         if wb2:
             wb2.close()
-        if app:
-            app.quit()
+        app.quit()
         raise e
+
+    return app, wb1, wb2, ws1, ws_front
 
 
     
@@ -655,128 +579,109 @@ def escrever_nf(wb_faturamento, nome_navio, dn):
 
     print("✅ Texto da NF escrito com sucesso")
 
-
-
-# === IMPORTS DAS FUNÇÕES QUE VOCÊ JÁ TEM NO SCRIPT ===
-# (certifique-se de que essas funções estão definidas no mesmo arquivo ou importadas corretamente)
-# validar_licenca, obter_dn_da_pasta, obter_nome_navio_da_pasta,
-# processar_front, MMO, escrever_nf, obter_periodos,
-# inserir_linhas_report, gerar_coluna_E_ajustada, preencher_coluna_E_por_ciclos,
-# mapear_valores_por_ciclo, preencher_coluna_G_por_ciclo, montar_datas_report_vigia,
-# OC, credit_note, arredondar_para_baixo_50, cargonave, fechar_workbooks
-
-
 def main():
     print("🚀 Iniciando execução...")
 
-    # ========= 1 – Licença =========
+    # ========== 1 - Licença ========== #
+
     validar_licenca()
 
-    # ========= 2 – Localizar FATURAMENTOS =========
-    pasta_faturamentos = obter_pasta_faturamentos()
+    # ========= 2 – Abrir arquivos =========
+    app, wb1, wb2, ws1, ws_front = abrir_workbooks()
+    if not all([app, wb1, wb2, ws1, ws_front]):
+        sys.exit("❌ Erro ao abrir workbooks")
 
-    # ========= 3 – Abrir arquivos =========
-    resultado = abrir_workbooks(pasta_faturamentos)
-    if not resultado:
-        sys.exit("❌ Usuário cancelou ou erro ao abrir workbooks")
+    print("📂 Workbooks abertos")
 
-    app, wb1, wb2, ws1, ws_front = resultado
+    # ========= 3 – DN e Navio =========
+    dn = obter_dn_da_pasta(wb1.fullname)
+    if not dn:
+        sys.exit("❌ DN não identificada pela pasta")
 
-    print("📂 Workbooks abertos com sucesso!")
+    nome_navio = obter_nome_navio_da_pasta(wb1.fullname)
+    ano_atual = datetime.now().year
+    texto_dn = f"DN: {dn}/{ano_atual}"
 
-    try:
-        # ========= 4 – DN e Navio =========
-        dn = obter_dn_da_pasta(wb1.fullname)
-        if not dn:
-            sys.exit("❌ DN não identificada pela pasta")
+    # FRONT VIGIA
+    ws_front.range("D15").value = nome_navio
+    ws_front.range("C21").value = texto_dn
 
-        nome_navio = obter_nome_navio_da_pasta(wb1.fullname)
-        ano_atual = datetime.now().year
-        texto_dn = f"DN: {dn}/{ano_atual}"
+    berco = input("WAREHOUSE / BERÇO: ").strip().upper()
+    ws_front["D18"].value = berco
 
-        # Preenchimento FRONT VIGIA
-        ws_front.range("D15").value = nome_navio
-        ws_front.range("C21").value = texto_dn
+    # ========= 4 – FRONT (OBRIGATÓRIO PRIMEIRO) =========
+    print("⚙️ Processando FRONT VIGIA...")
+    data_inicio, data_fim = processar_front(ws1, ws_front)
+    if not data_inicio or not data_fim:
+        sys.exit("❌ Datas extremas inválidas no RESUMO")
+    print(f"📆 Datas extremas: {data_inicio} → {data_fim}")
 
-        berco = input("WAREHOUSE / BERÇO: ").strip().upper()
-        ws_front["D18"].value = berco
+    # ========= 5 – MMO =========
+    print("⚙️ Processando MMO...")
+    MMO(wb1.fullname, wb2)
 
-        # ========= 4 – Processar FRONT VIGIA =========
-        print("⚙️ Processando FRONT VIGIA...")
-        data_inicio, data_fim = processar_front(ws1, ws_front)
+    # ========= 6 – NF =========
+    escrever_nf(wb2, nome_navio, dn)
 
-        if not data_inicio or not data_fim:
-            sys.exit("❌ Datas extremas inválidas no RESUMO")
+    # ===== 7 – REPORT VIGIA =====
+    ws_resumo = wb1.sheets["Resumo"]
+    periodos = obter_periodos(ws_resumo)
 
-        print(f"📆 Datas extremas: {data_inicio} → {data_fim}")
+    ws_report = wb2.sheets["REPORT VIGIA"]
 
-        # ========= 5 – MMO =========
-        print("⚙️ Processando MMO...")
-        MMO(wb1.fullname, wb2)
+    # 2️⃣ Inserir linhas extras se necessário
+    inserir_linhas_report(ws_report, linha_inicial=22, periodos=periodos)
 
-        # ========= 6 – NF =========
-        escrever_nf(wb2, nome_navio, dn)
+    # 3️⃣ Gerar lista de ciclos confiável (coluna E)
+    ciclos_linha = gerar_coluna_E_ajustada(ws1, periodos, coluna_horario="C")
 
-        # ========= 7 – REPORT VIGIA =========
-        print("⚙️ Processando REPORT VIGIA...")
-        ws_resumo = wb1.sheets["Resumo"]
-        periodos = obter_periodos(ws_resumo)
+    # 4️⃣ Preencher coluna E do REPORT VIGIA
+    preencher_coluna_E_por_ciclos(ws_report, ciclos_linha, linha_inicial=22)
 
-        ws_report = wb2.sheets["REPORT VIGIA"]
 
-        # Inserir linhas extras se necessário
-        inserir_linhas_report(ws_report, linha_inicial=22, periodos=periodos)
+    # 5️⃣ Mapear valores do wb1 por ciclo (coluna G)
+    valores_por_ciclo = mapear_valores_por_ciclo(ws1, coluna_horario="C", coluna_valor="Z")
 
-        # Coluna E - Ciclos
-        ciclos_linha = gerar_coluna_E_ajustada(ws1, periodos, coluna_horario="C")
-        preencher_coluna_E_por_ciclos(ws_report, ciclos_linha, linha_inicial=22)
+    # 6️⃣ Preencher coluna G do REPORT VIGIA
+    preencher_coluna_G_por_ciclo(ws_report, ciclos_linha, valores_por_ciclo, coluna="G", linha_inicial=22)
 
-        # Coluna G - Valores
-        valores_por_ciclo = mapear_valores_por_ciclo(ws1, coluna_horario="C", coluna_valor="Z")
-        preencher_coluna_G_por_ciclo(ws_report, ciclos_linha, valores_por_ciclo, coluna="G", linha_inicial=22)
+    # 7️⃣ Preencher coluna C (datas) respeitando ciclos 00x06
+    montar_datas_report_vigia(
+        ws_report=ws_report,
+        ws_resumo=ws_resumo,
+    linha_inicial=22,
+    periodos=periodos
+)
 
-        # Coluna C - Datas (respeitando ciclos 00x06)
-        montar_datas_report_vigia(
-            ws_report=ws_report,
-            ws_resumo=ws_resumo,
-            linha_inicial=22,
-            periodos=periodos
-        )
 
-        # ========= 8 – Financeiro =========
-        print("⚙️ Processando Financeiro...")
-        OC(str(wb1.fullname), wb2)
-        credit_note(wb2, texto_dn)
-        # quitacao(wb2, texto_dn)  # descomentado se precisar
 
-        # ========= 9 – Ajustes finais =========
-        print("⚙️ Aplicando ajustes finais...")
-        arredondar_para_baixo_50(ws_front)
-        cargonave(ws_front)
-
-        # ========= 10 – Salvar e fechar =========
-        pasta_saida = Path(wb1.fullname).parent
-        arquivo_saida = pasta_saida / "3.xlsx"
-
-        fechar_workbooks(app, wb1, wb2, arquivo_saida)
-
-        print(f"✅ Processo concluído com sucesso!")
-        print(f"   Arquivo salvo em: {arquivo_saida}")
-
-    except Exception as e:
-        print(f"❌ Erro durante o processamento: {e}")
-        # Garante que o Excel feche mesmo em caso de erro
+    # 7️⃣ Garantir que data_inicio seja datetime
+    if not isinstance(data_inicio, datetime):
         try:
-            if wb1:
-                wb1.close()
-            if wb2:
-                wb2.close()
-            if app:
-                app.quit()
-        except:
-            pass
-        sys.exit(1)
+            data_inicio = pd.to_datetime(data_inicio)
+        except Exception as e:
+            raise ValueError(f"data_inicio inválida: {data_inicio}") from e
+
+
+    # ========= 8 – Financeiro =========
+    OC(str(wb1.fullname), wb2)
+    credit_note(wb2, texto_dn)
+    quitacao(wb2, texto_dn)
+
+    # ========= 10 – Ajustes finais =========
+    arredondar_para_baixo_50(ws_front)
+    cargonave(ws_front)
+
+    pasta_saida = Path(wb1.fullname).parent
+    arquivo_saida = pasta_saida / "3.xlsx"
+
+    fechar_workbooks(app, wb1, wb2, arquivo_saida)
+
+    print(f"✅ Processo finalizado: {arquivo_saida}")
 
 
 if __name__ == "__main__":
+    
     main()
+
+# Fim do código
