@@ -239,29 +239,6 @@ def validar_licenca():
     hoje_utc, hoje_local = data_online()
 
     limite = datetime(hoje_utc.year, hoje_utc.month, 30, tzinfo=timezone.utc)
-def data_online():
-    context = ssl.create_default_context(cafile=certifi.where())
-
-    req = urllib.request.Request(
-        "https://www.cloudflare.com",
-        headers={"User-Agent": "Mozilla/5.0"}
-    )
-
-    with urllib.request.urlopen(req, context=context, timeout=5) as r:
-        data_str = r.headers["Date"]
-
-    dt_utc = datetime.strptime(
-        data_str, "%a, %d %b %Y %H:%M:%S %Z"
-    ).replace(tzinfo=timezone.utc)
-
-    dt_local = dt_utc.astimezone()
-    return dt_utc, dt_local
-
-
-def validar_licenca():
-    hoje_utc, hoje_local = data_online()
-
-    limite = datetime(hoje_utc.year, hoje_utc.month, 30, tzinfo=timezone.utc)
     if hoje_utc > limite:
         sys.exit("⛔ Licença expirada")
 
@@ -690,14 +667,6 @@ def escrever_nf(wb_faturamento, nome_navio, dn):
     print("✅ Texto da NF escrito com sucesso")
 
 
-
-# === IMPORTS DAS FUNÇÕES QUE VOCÊ JÁ TEM NO SCRIPT ===
-# (certifique-se de que essas funções estão definidas no mesmo arquivo ou importadas corretamente)
-# validar_licenca, obter_dn_da_pasta, obter_nome_navio_da_pasta,
-# processar_front, MMO, escrever_nf, obter_periodos,
-# inserir_linhas_report, gerar_coluna_E_ajustada, preencher_coluna_E_por_ciclos,
-# mapear_valores_por_ciclo, preencher_coluna_G_por_ciclo, montar_datas_report_vigia,
-# OC, credit_note, arredondar_para_baixo_50, cargonave, fechar_workbooks
 
 
 def main():

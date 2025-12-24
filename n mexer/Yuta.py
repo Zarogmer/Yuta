@@ -17,10 +17,13 @@ from itertools import cycle
 from tkinter import Tk, filedialog
 import shutil
 import tempfile
+import time
 
 # =========================
 # Funções utilitárias
 # =========================
+
+
 
 
 def copiar_para_temp_e_ler_excel(caminho_original: Path | str) -> pd.DataFrame:
@@ -43,119 +46,6 @@ def copiar_para_temp_e_ler_excel(caminho_original: Path | str) -> pd.DataFrame:
         df = pd.read_excel(caminho_temp, engine="openpyxl")  # engine explícito ajuda
 
     return df
-
-def abrir_workbooks():
-    """
-    Abre:
-    - wb_navio   -> arquivo 1.xlsx (fonte de dados)
-    - wb_cliente -> arquivo 2.xlsx (template - somente leitura)
-    - wb_3       -> arquivo 3.xlsx (cópia do 2, onde tudo será escrito)
-    """
-
-    root = tk.Tk()
-    root.withdraw()
-
-    # ========= NAVIO =========
-    pasta_navio_str = filedialog.askdirectory(
-        title="Selecione a pasta do NAVIO (onde está o 1.xlsx)"
-    )
-    if not pasta_navio_str:
-        return None
-
-    pasta_navio = Path(pasta_navio_str)
-    pasta_cliente = pasta_navio.parent
-    nome_cliente = pasta_cliente.name.strip()
-
-    arquivos_navio = list(pasta_navio.glob("1*.xls*"))
-    if not arquivos_navio:
-        raise FileNotFoundError("Arquivo 1.xlsx não encontrado.")
-
-    arquivo_1 = arquivos_navio[0]
-
-    # ========= FATURAMENTOS =========
-    atual = pasta_cliente
-    pasta_faturamentos = None
-
-    while atual.parent != atual:
-        if atual.name == "01. FATURAMENTOS" and (atual / "FATURAMENTOS").exists():
-            pasta_faturamentos = atual / "FATURAMENTOS"
-            break
-        atual = atual.parent
-
-    if not pasta_faturamentos:
-        raise FileNotFoundError("Pasta FATURAMENTOS não encontrada.")
-
-    arquivo_2 = pasta_faturamentos / f"{nome_cliente}.xlsx"
-    if not arquivo_2.exists():
-        raise FileNotFoundError(f"Arquivo cliente não encontrado: {arquivo_2}")
-
-    # ========= TEMP =========
-    temp_dir = tempfile.TemporaryDirectory()
-    temp_path = Path(temp_dir.name)
-
-    arquivo_1_temp = temp_path / arquivo_1.name
-    arquivo_2_temp = temp_path / arquivo_2.name
-    arquivo_3_temp = temp_path / "3.xlsx"
-
-    shutil.copy2(arquivo_1, arquivo_1_temp)
-    shutil.copy2(arquivo_2, arquivo_2_temp)
-    shutil.copy2(arquivo_2, arquivo_3_temp)  # 3 = cópia do 2
-
-    # ========= XLWINGS =========
-    app = xw.App(visible=False)
-
-    try:
-        wb_navio   = app.books.open(str(arquivo_1_temp))
-        wb_cliente = app.books.open(str(arquivo_2_temp))  # leitura
-        wb_3       = app.books.open(str(arquivo_3_temp))  # escrita
-
-        # sheets principais
-        ws_navio = wb_navio.sheets[0]
-
-        if nome_cliente in [s.name for s in wb_3.sheets]:
-            ws_front_3 = wb_3.sheets[nome_cliente]
-        elif "FRONT VIGIA" in [s.name for s in wb_3.sheets]:
-            ws_front_3 = wb_3.sheets["FRONT VIGIA"]
-        else:
-            ws_front_3 = wb_3.sheets.add("FRONT VIGIA")
-
-        # metadados
-        wb_3.pasta_navio = pasta_navio
-        wb_3.temp_dir = temp_dir
-
-        return app, wb_navio, wb_cliente, wb_3, ws_navio, ws_front_3
-
-    except Exception as e:
-        app.quit()
-        temp_dir.cleanup()
-        raise e
-
-
-def fechar_workbooks(app, wb_navio, wb_cliente, wb_3):
-    try:
-        if wb_3:
-            arquivo_saida = wb_3.pasta_navio / "3.xlsx"
-            wb_3.save(str(arquivo_saida))
-            wb_3.close()
-
-        if wb_navio:
-            wb_navio.close()
-
-        if wb_cliente:
-            wb_cliente.close()
-
-    finally:
-        if app:
-            app.quit()
-
-
-
-
-
-
-
-
-
 
 def obter_pasta_faturamentos() -> Path:
     """
@@ -211,7 +101,81 @@ def obter_pasta_faturamentos() -> Path:
     return caminho_alvo
 
 
+def abrir_workbooks(pasta_faturamentos: Path):
+    """
+    Abre:
+    - 1.xlsx (ou similar) da pasta do NAVIO selecionada pelo usuário
+    - XLSX do cliente na pasta FATURAMENTOS
+    """
+    root = tk.Tk()
+    root.withdraw()
 
+    # 1️⃣ Usuário seleciona a pasta do NAVIO
+    pasta_navio_str = filedialog.askdirectory(
+        title="Selecione a pasta do NAVIO (onde está o 1.xlsx)"
+    )
+
+    if not pasta_navio_str:
+        print("Seleção cancelada pelo usuário.")
+        return None, None, None, None, None
+
+    pasta_navio = Path(pasta_navio_str)
+    pasta_cliente = pasta_navio.parent
+    nome_cliente = pasta_cliente.name.strip()  # remove espaços acidentais
+
+    # Procura arquivo que começa com "1" (1.xlsx, 1.xls, etc.)
+    arquivos_1 = list(pasta_navio.glob("1*.xls*"))
+    if not arquivos_1:
+        raise FileNotFoundError(f"Nenhum arquivo iniciando com '1' encontrado em:\n{pasta_navio}")
+
+    arquivo1 = arquivos_1[0]  # pega o primeiro (se tiver mais de um, pode melhorar depois)
+
+    # 2️⃣ Arquivo de faturamento do cliente (caminho fixo)
+    arquivo2 = pasta_faturamentos / f"{nome_cliente}.xlsx"
+
+    if not arquivo2.exists():
+        raise FileNotFoundError(f"Arquivo de faturamento não encontrado:\n{arquivo2}")
+
+    app.api.Calculate()
+    time.sleep(0.5)
+
+
+    app = xw.App(visible=False)
+    wb1 = wb2 = None
+
+    try:
+        # Aqui você pode usar xlwings direto, mas se quiser evitar lock, pode copiar também:
+        wb1 = app.books.open(str(arquivo1))
+        wb2 = app.books.open(str(arquivo2))
+
+        ws1 = wb1.sheets[0]
+
+        nomes_abas = [s.name for s in wb2.sheets]
+
+        if nome_cliente in nomes_abas:
+            ws_front = wb2.sheets[nome_cliente]
+        elif "FRONT VIGIA" in nomes_abas:
+            ws_front = wb2.sheets["FRONT VIGIA"]
+        else:
+            raise RuntimeError(
+                f"Nenhuma aba válida encontrada.\n"
+                f"Esperado: '{nome_cliente}' ou 'FRONT VIGIA'"
+            )
+
+        return app, wb1, wb2, ws1, ws_front
+
+    except Exception as e:
+        if wb1:
+            wb1.close()
+        if wb2:
+            wb2.close()
+        if app:
+            app.quit()
+        raise e
+
+
+    
+def fechar_workbooks(app, wb1=None, wb2=None, arquivo_saida=None):
     """
     Salva wb1 normalmente e salva wb2 EXCLUSIVAMENTE como 3.xlsx
     na pasta do cliente (ex: WILSON). Nunca salva em FATURAMENTOS.
@@ -282,6 +246,7 @@ def validar_licenca():
     print(f"📅 Data local: {hoje_local.date()}")
 
 
+
 def data_por_extenso(valor):
     if isinstance(valor, datetime):
         data = valor
@@ -299,19 +264,6 @@ def data_por_extenso(valor):
         return ""  # nunca usa datetime.now()
 
     return data.strftime("%d de %B de %Y")
-
-def MMO(arquivo1, wb2):
-    ws = wb2.sheets["REPORT VIGIA"]
-    if str(ws["E25"].value).strip().upper() != "MMO": return
-    df = pd.read_excel(arquivo1, sheet_name="Resumo", header=None)
-    col_g = df[6].dropna()
-    if col_g.empty: return
-    try:
-        ultimo_float = locale.atof(str(col_g.iloc[-1]).replace("R$", "").strip())
-    except: ultimo_float = float(col_g.iloc[-1])
-    ws["F25"].value = ultimo_float
-    ws["F25"].number_format = "#.##0,00"
-
 
 def processar_front(ws1, ws_front):
     """
@@ -358,8 +310,8 @@ def inserir_linhas_report(ws_report, linha_inicial, periodos):
         ws_report.api.Rows(linha_inicial).Copy(ws_report.api.Rows(destino))
         ws_report.api.Rows(destino).RowHeight = row_height
 
-# ===== COLUNA E ===== #
 
+# ===== COLUNA E ===== #
 
 def obter_periodos(ws_resumo):
     """
@@ -376,7 +328,6 @@ def obter_periodos(ws_resumo):
         return int(float(ultimo))
     except:
         return 1
-
 
 
 def gerar_coluna_E_ajustada(ws1, periodos, coluna_horario="C"):
@@ -421,7 +372,6 @@ def gerar_coluna_E_ajustada(ws1, periodos, coluna_horario="C"):
         ciclos_linha.append(c)
 
     return ciclos_linha
-
 
 
 def preencher_coluna_E_por_ciclos(ws_report, ciclos_linha, linha_inicial=22):
@@ -490,6 +440,7 @@ def preencher_coluna_G_por_ciclo(ws_report, ciclos_linha, valores_por_ciclo, col
     return len(ciclos_linha)
 
 # ===== COLUNA C ===== #
+
 
 def montar_datas_report_vigia(ws_report, ws_resumo, linha_inicial=22, periodos=None):
     """
@@ -584,19 +535,8 @@ def obter_datas_extremos(ws_resumo):
 
 # ===== ABAS ESPECIFICAS =====#
 
-def MMO(arquivo1, wb2):
-    ws = wb2.sheets["REPORT VIGIA"]
-    if str(ws["E25"].value).strip().upper() != "MMO": return
-    df = pd.read_excel(arquivo1, sheet_name="Resumo", header=None)
-    col_g = df[6].dropna()
-    if col_g.empty: return
-    try:
-        ultimo_float = locale.atof(str(col_g.iloc[-1]).replace("R$", "").strip())
-    except: ultimo_float = float(col_g.iloc[-1])
-    ws["F25"].value = ultimo_float
-    ws["F25"].number_format = "#.##0,00"
 
-def OC(arquivo1, wb2):
+def OC(wb1, wb2):
     ws = wb2.sheets["FRONT VIGIA"]
     if str(ws["G16"].value).strip().upper() == "O.C.:":
         ws["H16"].value = input("OC: ")
@@ -605,99 +545,91 @@ def credit_note(wb, valor_c21):
     if "Credit Note" in [s.name for s in wb.sheets]:
         wb.sheets["Credit Note"]["C21"].value = valor_c21
 
-def quitacao(wb, valor_c21):
-    """
-    Preenche a aba Quitação com:
-    - valor_c21 em C22
-    - próximo número de NF baseado nos PDFs da pasta do mês atual
-    Usa wb1.pasta_navio (já guardada em abrir_workbooks) para encontrar:
-    Central de Documentos - Documentos > 2.2 CONTABILIDADE 2025 > 12 - DEZEMBRO
-    Ignora arquivos com 'CANCELADA', 'CANCELADO', etc.
-    """
-    if "Quitação" not in [s.name for s in wb.sheets]:
-        print("⚠️ Aba 'Quitação' não encontrada. Pulando quitacao().")
-        return
 
-    ws = wb.sheets["Quitação"]
-    ws["C22"].value = valor_c21
 
-    # ================ PEGAR PASTA DO NAVIO GUARDADA NO WB1 ================
-    try:
-        # wb pode ser wb2, mas wb1 tem a pasta_navio salva
-        import sys
-        current_module = sys.modules[__name__]
-        if hasattr(current_module, 'wb1') and hasattr(current_module.wb1, 'pasta_navio'):
-            pasta_navio = current_module.wb1.pasta_navio
-        elif 'wb1' in globals() and hasattr(globals()['wb1'], 'pasta_navio'):
-            pasta_navio = globals()['wb1'].pasta_navio
-        else:
-            raise AttributeError("pasta_navio não encontrada")
-    except:
-        print("❌ Não conseguiu acessar a pasta do navio. Usando NF.: 1 como fallback.")
-        ws["H22"].value = "NF.: 1"
-        return
+def obter_proxima_nf(pasta_nfs):
+    if not os.path.exists(pasta_nfs):
+        print(f"⚠️ Pasta de NFs não encontrada:\n{pasta_nfs}")
+        return 1
 
-    print(f"Usando pasta do navio para localizar contabilidade:\n   {pasta_navio}")
 
-    # ================ SUBIR ATÉ A RAIZ DA EMPRESA ================
-    raiz_empresa = None
-    for pai in pasta_navio.parents:
-        if pai.name == "SANPORT LOGÍSTICA PORTUÁRIA LTDA":
-            raiz_empresa = pai
-            break
-
-    if not raiz_empresa:
-        print("❌ Raiz 'SANPORT LOGÍSTICA PORTUÁRIA LTDA' não encontrada.")
-        ws["H22"].value = "NF.: 1"
-        return
-
-    print(f"✅ Raiz da empresa encontrada: {raiz_empresa}")
-
-    # ================ MONTAR CAMINHO EXATO DA CONTABILIDADE ================
-    ano = datetime.now().year  # 2025
-    mes_num = datetime.now().month  # 12 = Dezembro
-    nomes_meses = ["JANEIRO", "FEVEREIRO", "MARÇO", "ABRIL", "MAIO", "JUNHO",
-                   "JULHO", "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO"]
-    nome_mes = nomes_meses[mes_num - 1]
-
-    pasta_pdfs = raiz_empresa / "Central de Documentos - Documentos" / f"2.2 CONTABILIDADE {ano}" / f"{mes_num:02d} - {nome_mes}"
-
-    if not pasta_pdfs.exists():
-        print(f"⚠️ Pasta do mês não encontrada:\n   {pasta_pdfs}")
-        print("   Criando automaticamente para futuro uso...")
-        pasta_pdfs.mkdir(parents=True, exist_ok=True)
-        ws["H22"].value = "NF.: 1"
-        print("✅ Primeira NF do mês → NF.: 1")
-        return
-
-    print(f"🔍 Lendo PDFs em:\n   {pasta_pdfs}")
-
-    # ================ ENCONTRAR O MAIOR NÚMERO VÁLIDO ================
     numeros = []
 
-    for arquivo in pasta_pdfs.glob("*.pdf"):
-        nome = arquivo.stem.upper()
+    for arquivo in os.listdir(pasta_nfs):
+        nome, ext = os.path.splitext(arquivo)
 
-        # Ignora arquivos cancelados
-        if any(term in nome for term in ["CANCELADA", "CANCELADO", "CANCELAD"]):
+        # ignora arquivos que não sejam PDF (se quiser)
+        if ext.lower() != ".pdf":
             continue
 
-        # Extrai o número inicial (ex: 7749.pdf → 7749)
-        parte = nome.split()[0].split("-")[0].split("_")[0].split("(")[0].strip()
-        if parte.isdigit():
-            numeros.append(int(parte))
+        # captura apenas o número inicial do nome
+        match = re.match(r"(\d+)", nome)
+        if match:
+            numeros.append(int(match.group(1)))
 
     if not numeros:
-        proximo = 1
-        print("   Nenhum PDF válido encontrado → NF.: 1")
-    else:
-        proximo = max(numeros) + 1
-        print(f"   Maior número encontrado: {max(numeros)} → próximo = {proximo}")
-        print(f"   Total de PDFs válidos: {len(numeros)}")
+        return 1
 
-    ws["H22"].value = f"NF.: {proximo}"
-    print(f"✅ Quitação preenchida → NF.: {proximo}")
+    return max(numeros) + 1
 
+
+def colar_nf(ws, celula, numero_nf):
+    ws[celula].value = f"NF.: {numero_nf}"
+
+
+
+def MMO(wb1, wb2):
+    """
+    wb1 = NAVIO (tem 'Resumo')
+    wb2 = CLIENTE (tem 'REPORT VIGIA')
+    """
+
+    print("   Iniciando MMO...")
+
+    # --- REPORT VIGIA (destino) ---
+    try:
+        ws_report = wb2.sheets["REPORT VIGIA"]
+    except:
+        print("   ⚠️ Aba 'REPORT VIGIA' não encontrada. Pulando MMO.")
+        return
+
+    if str(ws_report["E25"].value).strip().upper() != "MMO":
+        print("   MMO não necessário (E25 != 'MMO').")
+        return
+
+    # --- RESUMO (origem) ---
+    try:
+        ws_resumo = wb1.sheets["Resumo"]
+    except:
+        print("   ⚠️ Aba 'Resumo' não encontrada no NAVIO. Pulando MMO.")
+        return
+
+    print("   Lendo coluna G do Resumo...")
+
+    valores_g = ws_resumo.range("G1:G1000").value
+    valores_limpos = [v for v in valores_g if v not in (None, "")]
+
+    if not valores_limpos:
+        print("   Coluna G vazia. Pulando MMO.")
+        return
+
+    ultimo_valor = valores_limpos[-1]
+
+    try:
+        texto = str(ultimo_valor)
+        texto = texto.replace("R$", "").replace(" ", "")
+        texto = texto.replace(".", "").replace(",", ".")
+        ultimo_float = float(texto)
+    except Exception as e:
+        print(f"   Erro ao converter '{ultimo_valor}': {e}")
+        ultimo_float = 0.0
+
+    ws_report["F25"].value = ultimo_float
+    ws_report["F25"].number_format = "#,##0.00"
+
+    print(f"   ✅ MMO concluído: R$ {ultimo_float:,.2f} escrito em F25")
+
+    
 def cargonave(ws):
     valor_c9 = ws.range("C9").value
     return str(valor_c9).strip().upper() == "A/C AGÊNCIA MARÍTIMA CARGONAVE LTDA."
@@ -764,106 +696,101 @@ def escrever_nf(wb_faturamento, nome_navio, dn):
 
     print("✅ Texto da NF escrito com sucesso")
 
+def quitacao(wb, valor_c21):
+    if "Quitação" not in [s.name for s in wb.sheets]:
+        return
+
+    ws = wb.sheets["Quitação"]
+
+    # Colar valor financeiro
+    ws["C22"].value = valor_c21
+
+    # Caminho real das NFs
+    pasta_nfs = r"C:\Users\Carol\SANPORT LOGÍSTICA PORTUÁRIA LTDA\Central de Documentos - Documentos\2.2 CONTABILIDADE 2025\12 - DEZEMBRO"
+
+    proxima_nf = obter_proxima_nf(pasta_nfs)
+
+    # Colar NF
+    colar_nf(ws, "H22", proxima_nf)
+
+
+
+
+
+
 
 def main():
     print("🚀 Iniciando execução...")
 
+    # ========= 1 – Licença =========
     validar_licenca()
 
-    resultado = abrir_workbooks()
+    # ========= 2 – Localizar FATURAMENTOS =========
+    pasta_faturamentos = obter_pasta_faturamentos()
+
+    # ========= 3 – Abrir arquivos =========
+    resultado = abrir_workbooks(pasta_faturamentos)
     if not resultado:
-        sys.exit("❌ Operação cancelada.")
+        sys.exit("❌ Usuário cancelou ou erro ao abrir workbooks")
 
-    app, wb_navio, wb_cliente, wb_3, ws_navio, ws_front = resultado
-
-    print("📂 Workbooks abertos com sucesso!")
+    app, wb1, wb2, ws1, ws_front = resultado
 
     try:
-        # ======================================================
-        # DADOS BÁSICOS (lê SOMENTE do arquivo 1)
-        # ======================================================
-        dn = obter_dn_da_pasta(wb_navio.fullname)
+        # ========= 4 – DN e Navio =========
+        dn = obter_dn_da_pasta(wb1.fullname)
         if not dn:
-            sys.exit("❌ DN não identificada.")
+            sys.exit("❌ DN não identificada pela pasta")
 
-        nome_navio = obter_nome_navio_da_pasta(wb_navio.fullname)
+        nome_navio = obter_nome_navio_da_pasta(wb1.fullname)
         ano_atual = datetime.now().year
         texto_dn = f"DN: {dn}/{ano_atual}"
 
-        berco = input("WAREHOUSE / BERÇO: ").strip().upper()
-
-        # ======================================================
-        # FRONT VIGIA (escreve SOMENTE no arquivo 3)
-        # ======================================================
-        print("⚙️ Preenchendo FRONT VIGIA...")
-
+        # Preenchimento FRONT VIGIA
         ws_front.range("D15").value = nome_navio
         ws_front.range("C21").value = texto_dn
-        ws_front.range("D18").value = berco
 
-        # Lê do NAVIO, escreve no 3
-        data_inicio, data_fim = processar_front(
-            ws_navio=ws_navio,
-            ws_front=ws_front
-        )
+        berco = input("WAREHOUSE / BERÇO: ").strip().upper()
+        ws_front["D18"].value = berco
 
-        # ======================================================
-        # MMO
-        # ======================================================
+        # ========= 4 – Processar FRONT VIGIA =========
+        print("⚙️ Processando FRONT VIGIA...")
+        data_inicio, data_fim = processar_front(ws1, ws_front)
+
+        if not data_inicio or not data_fim:
+            sys.exit("❌ Datas extremas inválidas no RESUMO")
+
+
+        ws_resumo = wb1.sheets["Resumo"]
+        # ========= 5 – MMO =========
         print("⚙️ Processando MMO...")
-        MMO(wb_3.fullname, wb_3)
 
-        # ======================================================
-        # NOTAS FISCAIS
-        # ======================================================
-        escrever_nf(wb_3, nome_navio, dn)
+        app.api.Calculate()
+        time.sleep(0.5)
 
-        # ======================================================
-        # REPORT VIGIA
-        # ======================================================
+
+
+        MMO(wb1, wb2)  # ou se você mudou para MMO(wb1, wb2), deixa assim
+        # ========= 6 – NF =========
+        escrever_nf(wb2, nome_navio, dn)
+
+        # ========= 7 – REPORT VIGIA =========
         print("⚙️ Processando REPORT VIGIA...")
-
-        try:
-            ws_report = wb_3.sheets["REPORT VIGIA"]
-        except:
-            ws_report = wb_3.sheets.add("REPORT VIGIA")
-
-        ws_resumo = wb_3.sheets["Resumo"]
-
         periodos = obter_periodos(ws_resumo)
 
-        inserir_linhas_report(
-            ws_report,
-            linha_inicial=22,
-            periodos=periodos
-        )
+        ws_report = wb2.sheets["REPORT VIGIA"]
 
-        ciclos_linha = gerar_coluna_E_ajustada(
-            ws_navio,
-            periodos,
-            coluna_horario="C"
-        )
+        # Inserir linhas extras se necessário
+        inserir_linhas_report(ws_report, linha_inicial=22, periodos=periodos)
 
-        preencher_coluna_E_por_ciclos(
-            ws_report,
-            ciclos_linha,
-            linha_inicial=22
-        )
+        # Coluna E - Ciclos
+        ciclos_linha = gerar_coluna_E_ajustada(ws1, periodos, coluna_horario="C")
+        preencher_coluna_E_por_ciclos(ws_report, ciclos_linha, linha_inicial=22)
 
-        valores_por_ciclo = mapear_valores_por_ciclo(
-            ws_navio,
-            coluna_horario="C",
-            coluna_valor="Z"
-        )
+        # Coluna G - Valores
+        valores_por_ciclo = mapear_valores_por_ciclo(ws1, coluna_horario="C", coluna_valor="Z")
+        preencher_coluna_G_por_ciclo(ws_report, ciclos_linha, valores_por_ciclo, coluna="G", linha_inicial=22)
 
-        preencher_coluna_G_por_ciclo(
-            ws_report,
-            ciclos_linha,
-            valores_por_ciclo,
-            coluna="G",
-            linha_inicial=22
-        )
-
+        # Coluna C - Datas (respeitando ciclos 00x06)
         montar_datas_report_vigia(
             ws_report=ws_report,
             ws_resumo=ws_resumo,
@@ -871,41 +798,39 @@ def main():
             periodos=periodos
         )
 
-        # ======================================================
-        # FINANCEIRO
-        # ======================================================
+        # ========= 8 – Financeiro =========
         print("⚙️ Processando Financeiro...")
+        OC(str(wb1.fullname), wb2)
+        credit_note(wb2, texto_dn)
+        quitacao(wb2, texto_dn)  # descomentado se precisar
 
-        OC(wb_3.fullname, wb_3)
-        credit_note(wb_3, texto_dn)
-        quitacao(wb_3, texto_dn)
-
-        # ======================================================
-        # AJUSTES FINAIS
-        # ======================================================
-        print("⚙️ Ajustes finais...")
-
+        # ========= 9 – Ajustes finais =========
+        print("⚙️ Aplicando ajustes finais...")
         arredondar_para_baixo_50(ws_front)
         cargonave(ws_front)
 
-        # ======================================================
-        # SALVAR 3.XLSX
-        # ======================================================
-        print("💾 Salvando 3.xlsx na pasta do NAVIO...")
+        # ========= 10 – Salvar e fechar =========
+        pasta_saida = Path(wb1.fullname).parent
+        arquivo_saida = pasta_saida / "3.xlsx"
 
-        arquivo_saida = wb_3.pasta_navio / "3.xlsx"
-        wb_3.save(str(arquivo_saida))
+        fechar_workbooks(app, wb1, wb2, arquivo_saida)
 
-        print(f"✅ 3.xlsx gerado com sucesso:\n   {arquivo_saida}")
-        print("✅ FATURAMENTOS permaneceu intacto.")
+        print(f"✅ Processo concluído com sucesso!")
+        print(f"   Arquivo salvo em: {arquivo_saida}")
 
     except Exception as e:
-        print(f"❌ Erro durante execução: {e}")
-        raise
-
-    finally:
-        fechar_workbooks(app, wb_navio, wb_cliente, wb_3)
-        print("🎉 Processo concluído com sucesso!")
+        print(f"❌ Erro durante o processamento: {e}")
+        # Garante que o Excel feche mesmo em caso de erro
+        try:
+            if wb1:
+                wb1.close()
+            if wb2:
+                wb2.close()
+            if app:
+                app.quit()
+        except:
+            pass
+        sys.exit(1)
 
 
 if __name__ == "__main__":
