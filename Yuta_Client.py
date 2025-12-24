@@ -287,19 +287,6 @@ def data_por_extenso(valor):
 
     return data.strftime("%d de %B de %Y")
 
-def MMO(arquivo1, wb2):
-    ws = wb2.sheets["REPORT VIGIA"]
-    if str(ws["E25"].value).strip().upper() != "MMO": return
-    df = pd.read_excel(arquivo1, sheet_name="Resumo", header=None)
-    col_g = df[6].dropna()
-    if col_g.empty: return
-    try:
-        ultimo_float = locale.atof(str(col_g.iloc[-1]).replace("R$", "").strip())
-    except: ultimo_float = float(col_g.iloc[-1])
-    ws["F25"].value = ultimo_float
-    ws["F25"].number_format = "#.##0,00"
-
-
 def processar_front(ws1, ws_front):
     """
     Atualiza somente a aba FRONT VIGIA
@@ -589,6 +576,53 @@ def quitacao(wb, valor_c21):
     pdfs.sort(key=lambda x: int(os.path.splitext(x)[0]))
     ws["H22"].value = f"NF.: {len(pdfs)+1}"
 
+def MMO(arquivo1, wb2):
+    """
+    Processa MMO sem abrir arquivo na rede (zero permission denied).
+    wb2 é o wb_navio (tem "Resumo")
+    Escreve em "REPORT VIGIA" do wb2
+    """
+    print("   Iniciando MMO...")
+
+    try:
+        ws_report = wb2.sheets["REPORT VIGIA"]
+    except:
+        print("   ⚠️ Aba 'REPORT VIGIA' não encontrada. Pulando MMO.")
+        return
+
+    if str(ws_report["E25"].value).strip().upper() != "MMO":
+        print("   MMO não necessário (E25 != 'MMO').")
+        return
+
+    try:
+        ws_resumo = wb2.sheets["Resumo"]
+    except:
+        print("   ⚠️ Aba 'Resumo' não encontrada. Pulando MMO.")
+        return
+
+    print("   Lendo coluna G...")
+    valores_g = ws_resumo.range("G1:G1000").value
+    valores_limpos = [v for v in valores_g if v is not None]
+
+    if not valores_limpos:
+        print("   Coluna G vazia. Pulando MMO.")
+        return
+
+    ultimo_valor = valores_limpos[-1]
+
+    try:
+        texto = str(ultimo_valor).replace("R$", "").replace(" ", "").strip()
+        texto = texto.replace(".", "").replace(",", ".")
+        ultimo_float = float(texto)
+    except:
+        print(f"   Erro ao converter '{ultimo_valor}'. Usando 0.")
+        ultimo_float = 0.0
+
+    ws_report["F25"].value = ultimo_float
+    ws_report["F25"].number_format = "#,##0.00"
+
+    print(f"   ✅ MMO concluído: R$ {ultimo_float:,.2f} escrito em F25")
+    
 def cargonave(ws):
     valor_c9 = ws.range("C9").value
     return str(valor_c9).strip().upper() == "A/C AGÊNCIA MARÍTIMA CARGONAVE LTDA."
@@ -712,8 +746,7 @@ def main():
 
         # ========= 5 – MMO =========
         print("⚙️ Processando MMO...")
-        MMO(wb1.fullname, wb2)
-
+        MMO(wb1.fullname, wb2)  # ou se você mudou para MMO(wb1, wb2), deixa assim
         # ========= 6 – NF =========
         escrever_nf(wb2, nome_navio, dn)
 
@@ -747,7 +780,7 @@ def main():
         print("⚙️ Processando Financeiro...")
         OC(str(wb1.fullname), wb2)
         credit_note(wb2, texto_dn)
-        # quitacao(wb2, texto_dn)  # descomentado se precisar
+        quitacao(wb2, texto_dn)  # descomentado se precisar
 
         # ========= 9 – Ajustes finais =========
         print("⚙️ Aplicando ajustes finais...")
