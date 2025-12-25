@@ -1065,7 +1065,7 @@ class CentralSanport:
     @staticmethod
     def mostrar_menu():
         print("=" * 60)
-        print("     🚢 CENTRAL DE ATIVIDADES - SANPORT")
+        print("     🚢 CENTRAL DE ATIVIDADE - SANPORT")
         print("     Bem-vindo(a)!")
         print("=" * 60)
         print("1 - Faturamento Completo ")
