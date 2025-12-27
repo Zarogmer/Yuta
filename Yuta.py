@@ -603,6 +603,8 @@ class FaturamentoDeAcordo:
 # MENU PRINCIPAL
 # ==============================
 
+
+
 class CentralSanport:
     def __init__(self):
         self.completo = FaturamentoCompleto()
