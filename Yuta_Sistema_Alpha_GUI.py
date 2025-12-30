@@ -232,6 +232,7 @@ class FaturamentoCompleto:
         self.nome_navio = None
         self.g_logic = g_logic
 
+
     # ---------------- fluxo principal ----------------
     def executar(self):
         print("🚀 Iniciando execução...")
@@ -259,32 +260,53 @@ class FaturamentoCompleto:
         """
         Fluxo principal do faturamento:
         1) Preenche FRONT VIGIA
-        2) Atualiza o REPORT VIGIA (linhas e datas)
+        2) Atualiza o REPORT VIGIA (E, G e C)
         """
 
-        # ---------- FRONT ----------
         try:
-            self.preencher_front_vigia()
-        except Exception as e:
-            print(f"❌ Erro ao preencher FRONT: {e}")
-            raise
+            print("DEBUG hasattr FRONT:", hasattr(self, "preencher_front_vigia"))
 
-        # ---------- REPORT ----------
-        try:
+
+            # ---------- FRONT ----------
+            self.preencher_front_vigia()
+
+            # ---------- REPORT ----------
             ws_report = self.wb2.sheets["REPORT VIGIA"]
 
-            # Determina o número de períodos
-            periodos = self.obter_periodos(self.ws1)
-            print("DEBUG: periodos =", periodos)
+            # 1️⃣ quantidade de períodos (APENAS PARA INSERIR LINHAS)
+            qtd_periodos = self.obter_periodos(self.ws1)
+            print("DEBUG: qtd_periodos =", qtd_periodos)
 
-            # Insere linhas no REPORT conforme períodos
-            self.inserir_linhas_report(ws_report, linha_inicial=22, periodos=periodos)
+            self.inserir_linhas_report(
+                ws_report,
+                linha_inicial=22,
+                periodos=qtd_periodos
+            )
 
-            # Preenche coluna E com os períodos
-            self.preencher_coluna_E(ws_report, linha_inicial=22)
+            # 2️⃣ COLUNA E → LISTA DE PERÍODOS
+            periodos = self.preencher_coluna_E(
+                ws_report,
+                linha_inicial=22,
+                debug=True
+            )
+            print("DEBUG: períodos E =", periodos)
 
-            # Monta as datas na coluna C
-            self.montar_datas_report_vigia(ws_report, self.ws1, linha_inicial=22, periodos=periodos)
+            # 3️⃣ COLUNA G → VALORES (BASEADO NA E)
+            self.preencher_coluna_G(
+                ws_report,
+                self.ws1,              # ws_resumo
+                linha_inicial=22,
+                periodos=periodos,     # 🔥 lista
+                debug=True
+            )
+
+            # 4️⃣ COLUNA C → DATAS (USA QUANTIDADE DA E)
+            self.montar_datas_report_vigia(
+                ws_report,
+                self.ws1,
+                linha_inicial=22,
+                periodos=len(periodos)  # ⚠️ INT
+            )
 
             print("✅ REPORT VIGIA atualizado com sucesso!")
 
@@ -296,8 +318,11 @@ class FaturamentoCompleto:
         try:
             pasta_saida = Path(self.wb1.fullname).parent if self.wb1 else None
             arquivo_saida = (pasta_saida / "3.xlsx") if pasta_saida else None
+
             fechar_workbooks(self.app, self.wb1, self.wb2, arquivo_saida)
+
             print(f"💾 Arquivo Excel salvo em: {arquivo_saida}")
+
         except Exception as e:
             print(f"⚠️ Erro ao salvar/fechar workbooks: {e}")
             raise
@@ -471,10 +496,143 @@ class FaturamentoCompleto:
 
     # ===== LINHA G=====#
 
+    def normalizar_periodo(self, valor_c):
+        if not valor_c:
+            return None
+
+        s = str(valor_c).strip().lower()
+        if s.startswith("06"):
+            return "06x12"
+        if s.startswith("12"):
+            return "12x18"
+        if s.startswith("18"):
+            return "18x24"
+        if s.startswith("00"):
+            return "00x06"
+        return None
+        
+    def gerar_valores_coluna_G(self, ws_resumo, periodos_E, debug=False):
+        mapa = self.extrair_valores_por_periodo(ws_resumo, debug=debug)
+        contadores = {k: 0 for k in mapa}
+        valores_g = []
+
+        for p in periodos_E:
+            if p in mapa and contadores[p] < len(mapa[p]):
+                valor = mapa[p][contadores[p]]
+                contadores[p] += 1
+            else:
+                valor = 0.0
+
+            valores_g.append(valor)
+
+        if debug:
+            print("DEBUG G FINAL:", valores_g)
+
+        return valores_g
+
+
+    def preencher_coluna_G(self, ws_report, ws_resumo, linha_inicial=22, periodos=None, debug=False):
+        """
+        Preenche a coluna G seguindo EXATAMENTE a ordem da coluna E
+        e formatando como moeda com 2 casas decimais.
+        """
+
+        if not periodos:
+            raise ValueError("periodos (lista da coluna E) é obrigatório")
+
+        valores = self.gerar_valores_coluna_G(
+            ws_resumo,
+            periodos,
+            debug=debug
+        )
+
+        if debug:
+            print("DEBUG G FINAL:", valores)
+
+        for i, valor in enumerate(valores):
+            cell = ws_report.range(f"G{linha_inicial + i}")
+            cell.value = valor              # número cru, sem arredondar
+            cell.api.NumberFormatLocal = 'R$ #.##0,00'
 
 
 
 
+    def extrair_valores_por_periodo(self, ws_resumo, debug=False):
+        last_row = ws_resumo.used_range.last_cell.row
+
+        mapa = {
+            "00x06": [],
+            "06x12": [],
+            "12x18": [],
+            "18x24": []
+        }
+
+        for i in range(2, last_row + 1):
+            c = ws_resumo.range(f"C{i}").value
+            z = ws_resumo.range(f"Z{i}").value
+
+            if not c or z is None:
+                continue
+
+            s_c = str(c).strip().lower()
+            if s_c.startswith("total"):
+                continue
+
+            periodo = self.normalizar_periodo(s_c)
+            if not periodo:
+                continue
+
+            try:
+                # ✅ CASO 1: já é número no Excel
+                if isinstance(z, (int, float)):
+                    valor = float(z)
+
+                # ✅ CASO 2: veio como texto "R$ 1.144,70"
+                else:
+                    valor = (
+                        str(z)
+                        .replace("R$", "")
+                        .replace(".", "")
+                        .replace(",", ".")
+                        .strip()
+                    )
+                    valor = float(valor)
+
+            except:
+                continue
+
+
+            mapa[periodo].append(valor)
+
+            if debug:
+                print(f"DEBUG MAPA: {periodo} += {valor}")
+
+        return mapa
+    
+    def extrair_numero_excel(self, z):
+        """
+        Garante conversão correta de valores do Excel
+        independente de vir como float ou string pt-BR.
+        """
+
+        # 👉 Caso 1: Excel já entregou número
+        if isinstance(z, (int, float)):
+            return float(z)
+
+        # 👉 Caso 2: Veio como texto (ex: "1.144,70")
+        s = str(z).strip()
+
+        if not s:
+            raise ValueError("valor vazio")
+
+        s = (
+            s.replace("R$", "")
+            .replace(" ", "")
+            .replace(".", "")
+            .replace(",", ".")
+        )
+
+        return float(s)
 
 
 
@@ -633,7 +791,7 @@ class FaturamentoCompleto:
 
         return 1
 
-        
+
 # ==============================
 # CLASSE 2: FATURAMENTO DE ACORDO
 # ==============================
