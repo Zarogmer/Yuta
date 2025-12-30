@@ -25,81 +25,6 @@ import tempfile
 
 
 
-def copiar_para_temp_e_ler_excel(caminho_original: Path | str) -> pd.DataFrame:
-    """
-    Copia o arquivo para pasta temporária local e lê com pandas.
-    Resolve a maioria dos PermissionError em pastas OneDrive/rede.
-    """
-    caminho_original = Path(caminho_original)
-    if not caminho_original.exists():
-        raise FileNotFoundError(f"Arquivo não encontrado: {caminho_original}")
-
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_dir_path = Path(temp_dir)
-        caminho_temp = temp_dir_path / caminho_original.name
-
-        print(f"Copiando {caminho_original.name} para pasta temporária local...")
-        shutil.copy2(caminho_original, caminho_temp)
-
-        print(f"Lendo arquivo temporário: {caminho_temp}")
-        df = pd.read_excel(caminho_temp, engine="openpyxl")  # engine explícito ajuda
-
-    return df
-
-def obter_pasta_faturamentos() -> Path:
-    """
-    Localiza automaticamente a pasta FATURAMENTOS dentro da estrutura OneDrive da SANPORT.
-    Funciona mesmo com espaços e hífens no nome da pasta.
-    """
-    print("\n=== BUSCANDO PASTA FATURAMENTOS AUTOMATICAMENTE ===")
-
-    # Possíveis locais base onde o OneDrive sincroniza a pasta da empresa
-    possiveis_bases = [
-        Path(r"C:\Users\Carol\SANPORT LOGÍSTICA PORTUÁRIA LTDA"),
-        Path(r"C:\Users\Carol\OneDrive - SANPORT LOGÍSTICA PORTUÁRIA LTDA"),  # caso seja OneDrive pessoal
-        Path.home() / "SANPORT LOGÍSTICA PORTUÁRIA LTDA",
-        Path.home() / "OneDrive" / "SANPORT LOGÍSTICA PORTUÁRIA LTDA",
-    ]
-
-    caminho_alvo = None
-
-    for base in possiveis_bases:
-        if base.exists():
-            print(f"✅ Encontrada pasta base: {base}")
-
-            # Procurar recursivamente por uma pasta chamada "FATURAMENTOS" dentro de "01. FATURAMENTOS"
-            candidatos = list(base.rglob("FATURAMENTOS"))
-            for candidato in candidatos:
-                # Filtrar para garantir que está dentro de "01. FATURAMENTOS"
-                if "01. FATURAMENTOS" in candidato.parent.as_posix():
-                    caminho_alvo = candidato
-                    print(f"✅ Pasta FATURAMENTOS encontrada em:\n   {caminho_alvo}")
-                    break
-
-            if caminho_alvo:
-                break
-        else:
-            print(f"❌ Não encontrada: {base}")
-
-    if not caminho_alvo:
-        print("❌ Pasta FATURAMENTOS não foi encontrada automaticamente.")
-        print("\nPossíveis soluções:")
-        print("• Verifique se o OneDrive está sincronizando a pasta da empresa")
-        print("• Clique com botão direito na pasta FATURAMENTOS → Propriedades → Localização")
-        print("  e me diga o caminho exato que aparece")
-        raise FileNotFoundError("Pasta FATURAMENTOS não localizada automaticamente")
-
-    # Debug final: listar alguns arquivos para confirmar
-    print(f"\nArquivos .xlsx encontrados na pasta ({len(list(caminho_alvo.glob('*.xlsx')))}):")
-    for arq in sorted(caminho_alvo.glob("*.xlsx"))[:10]:  # mostra só os 10 primeiros
-        print(f"   • {arq.name}")
-    if len(list(caminho_alvo.glob("*.xlsx"))) > 10:
-        print("   ... (mais arquivos)")
-
-    print("========================================\n")
-    return caminho_alvo
-
-
 def abrir_workbooks():
     """
     Usuário seleciona uma pasta no Desktop.
@@ -187,51 +112,6 @@ def fechar_workbooks(app, wb1=None, wb2=None, arquivo_saida=None):
         if app:
             app.quit()
 
-def obter_dn_da_pasta(caminho_arquivo):
-    """
-    Extrai números do nome da pasta do navio
-    Ex: '123 - NAVIO' -> '123'
-    """
-    pasta = os.path.basename(os.path.dirname(caminho_arquivo))
-
-    numeros = re.findall(r"\d+", pasta)
-
-    if not numeros:
-        return None
-
-    return numeros[0]  # primeiro bloco numérico
-
-
-# ===== Licença =====#
-
-
-def data_online():
-    context = ssl.create_default_context(cafile=certifi.where())
-
-    req = urllib.request.Request(
-        "https://www.cloudflare.com",
-        headers={"User-Agent": "Mozilla/5.0"}
-    )
-
-    with urllib.request.urlopen(req, context=context, timeout=5) as r:
-        data_str = r.headers["Date"]
-
-    dt_utc = datetime.strptime(
-        data_str, "%a, %d %b %Y %H:%M:%S %Z"
-    ).replace(tzinfo=timezone.utc)
-
-    dt_local = dt_utc.astimezone()
-    return dt_utc, dt_local
-
-
-def validar_licenca():
-    hoje_utc, hoje_local = data_online()
-
-    limite = datetime(hoje_utc.year, hoje_utc.month, 30, tzinfo=timezone.utc)
-    if hoje_utc > limite:
-        sys.exit("⛔ Licença expirada")
-
-    print(f"📅 Data local: {hoje_local.date()}")
 
 
 
@@ -662,7 +542,6 @@ def main():
     print("🚀 Iniciando execução...")
 
     # ========= 1 – Licença =========
-    validar_licenca()
 
     # ========= 2 – Localizar FATURAMENTOS =========
     

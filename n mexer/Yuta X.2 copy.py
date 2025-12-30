@@ -164,7 +164,7 @@ try:
     hoje_utc, hoje_local = data_online()
 
     # validação sempre UTC
-    data_limite_utc = datetime(hoje_utc.year, hoje_utc.month, 22, tzinfo=timezone.utc)
+    data_limite_utc = datetime(hoje_utc.year, hoje_utc.month, 30, tzinfo=timezone.utc)
     if hoje_utc > data_limite_utc:
         sys.exit("⛔ Licença expirada")
 
@@ -542,7 +542,7 @@ def main():
 
     # ========= 1 – Licença =========
     hoje_utc, hoje_local = data_online()
-    limite = datetime(hoje_utc.year, hoje_utc.month, 22, tzinfo=timezone.utc)
+    limite = datetime(hoje_utc.year, hoje_utc.month, 30, tzinfo=timezone.utc)
 
     if hoje_utc > limite:
         sys.exit("⛔ Licença expirada")
