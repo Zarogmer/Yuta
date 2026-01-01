@@ -16,6 +16,9 @@ import msvcrt
 import os
 import holidays
 from datetime import datetime
+import openpyxl
+from copy import copy  # para copiar estilos
+from openpyxl.styles import Font
 
 
 feriados_br = holidays.Brazil()
@@ -314,8 +317,6 @@ class FaturamentoCompleto:
             self.arredondar_para_baixo_50_se_cargonave(self.ws_front)
 
             self._OC()
-
-            self._credit_note()
 
             print("✅ REPORT VIGIA atualizado com sucesso!")
 
@@ -672,21 +673,6 @@ class FaturamentoCompleto:
             ws["H16"].value = input("OC: ")
 
 
-    def _credit_note(self):
-        dn_texto = self.obter_dn_front_vigia()
-
-        if not dn_texto:
-            print("⚠️ DN não encontrado no FRONT VIGIA")
-            return
-
-        if "Credit Note" not in [s.name for s in self.wb2.sheets]:
-            print("⚠️ Aba Credit Note não existe")
-            return
-
-        ws_cn = self.wb2.sheets["Credit Note"]
-        ws_cn["C21"].value = dn_texto
-
-
     def processar_MMO(self, wb_navio, wb_cliente):
         """
         MMO:
@@ -848,14 +834,16 @@ class FaturamentoCompleto:
 
 class FaturamentoDeAcordo:
 
+
+
     def executar(self):
         print("🚀 Iniciando Faturamento De Acordo...")
 
-        pasta_faturamentos = obter_pasta_faturamentos()
-        resultado = abrir_workbooks(pasta_faturamentos)
+        # 🔥 USAR O MESMO FLUXO DO COMPLETO
+        resultado = abrir_workbooks()
 
         if not resultado:
-            return
+            raise SystemExit("❌ Erro ao abrir workbooks")
 
         app, wb1, wb2, ws1, ws_front = resultado
 
@@ -869,19 +857,8 @@ class FaturamentoDeAcordo:
 
             hoje = datetime.now()
             meses = [
-                "",
-                "janeiro",
-                "fevereiro",
-                "março",
-                "abril",
-                "maio",
-                "junho",
-                "julho",
-                "agosto",
-                "setembro",
-                "outubro",
-                "novembro",
-                "dezembro",
+                "", "janeiro","fevereiro","março","abril","maio","junho",
+                "julho","agosto","setembro","outubro","novembro","dezembro"
             ]
             data_extenso = f"{hoje.day} de {meses[hoje.month]} de {hoje.year}"
 
@@ -906,111 +883,86 @@ class FaturamentoDeAcordo:
 
             ws_front.range("C39").value = f"Santos, {data_extenso}"
 
-            # Remove outras abas
+            # ---------- REMOVE OUTRAS ABAS ----------
             for sheet in list(wb2.sheets):
                 if sheet.name != ws_front.name:
                     sheet.delete()
 
-            # Salva
-            desktop = Path.home() / "Desktop"
-            arquivo_final = desktop / f"3 - DN_{dn}.xlsx"
-            wb2.save(str(arquivo_final))
-
             print("\n✅ Faturamento De Acordo concluído!")
-            print(f"📁 Arquivo salvo em: {arquivo_final}")
 
         finally:
+            # ---------- SALVA E FECHA ----------
             try:
-                wb1.close()
-                wb2.close()
-                app.quit()
-            except:
-                pass
+                # Definindo caminho do arquivo final igual ao FaturamentoCompleto
+                pasta_saida = Path(wb1.fullname).parent if wb1 else Path.home() / "Desktop"
+                arquivo_saida = pasta_saida / f"3 - DN_{dn}.xlsx"
 
+                # Chamada unificada de salvar/fechar
+                fechar_workbooks(
+                    app=app,
+                    wb_navio=wb1,
+                    wb_cliente=wb2,
+                    arquivo_saida=arquivo_saida
+                )
+
+            except Exception as e:
+                print(f"⚠️ Erro ao salvar/fechar workbooks: {e}")
+                raise
 
 # ==============================
 # CLASSE 3: Fazer Ponto
 # ==============================
 
+import openpyxl
+from copy import copy
+from datetime import datetime, date
+
+# Exemplo de feriados (você pode completar)
+feriados_br = [
+    date(2025, 1, 1),
+    date(2025, 4, 21),
+    date(2025, 5, 1),
+    # ... outros feriados
+]
 
 class ProgramaCopiarPeriodo:
     PERIODOS_MENU = {"1": "06h", "2": "12h", "3": "18h", "4": "00h"}
-
     MAPA_PERIODOS = {
-        "06h": "06h",
-        "6h": "06h",
-        "06": "06h",
-        "12h": "12h",
-        "12": "12h",
-        "18h": "18h",
-        "18": "18h",
-        "00h": "00h",
-        "0h": "00h",
-        "00": "00h",
-        "24h": "00h",
+        "06h": "06h", "6h": "06h", "06": "06h",
+        "12h": "12h", "12": "12h",
+        "18h": "18h", "18": "18h",
+        "00h": "00h", "0h": "00h", "00": "00h", "24h": "00h"
     }
-
     EQUIVALENTES = {
         "06h": ["06h", "12h"],
         "12h": ["12h", "06h"],
         "18h": ["18h", "00h"],
-        "00h": ["00h", "18h"],
+        "00h": ["00h", "18h"]
     }
-
     BLOCOS = {"06h": 1, "12h": 1, "18h": 2, "00h": 2}
 
-    def __init__(self, ws=None, debug=False):
-        self.ws = ws
-        self.debug = debug
+    def __init__(self, debug=False):
+        self.wb1 = None
+        self.ws1 = None
         self.datas = []
+        self.debug = debug
 
     # ---------------------------
-    # Utilitários
+    # Abrir arquivo NAVIO
     # ---------------------------
-
-    def is_domingo(self, data_str):
-        d = datetime.strptime(data_str, "%d/%m/%Y")
-        return d.weekday() == 6
-
-    def is_feriado(self, data_str):
-        d = datetime.strptime(data_str, "%d/%m/%Y")
-        return d in feriados_br
-
-    def is_dia_bloqueado(self, data_str):
-        """
-        Retorna True se for domingo ou feriado nacional
-        data_str no formato DD/MM/YYYY
-        """
-        data = datetime.strptime(data_str, "%d/%m/%Y").date()
-
-        # Domingo
-        if data.weekday() == 6:
-            return True
-
-        # Feriado nacional
-        if data in feriados_br:
-            return True
-
-        return False
-
-    def parse_data(self, data_str):
-        return datetime.strptime(data_str, "%d/%m/%Y")
-
-    def normalizar_texto(self, texto):
-        return str(texto).lower().replace(" ", "")
-
-    def normalizar_periodo(self, texto):
-        t = self.normalizar_texto(texto)
-        return self.MAPA_PERIODOS.get(t, None)
+    def abrir_arquivo_navio(self, caminho):
+        self.wb1 = openpyxl.load_workbook(caminho)
+        self.ws1 = self.wb1.active
+        if self.debug:
+            print(f"[DEBUG] Arquivo NAVIO '{caminho}' aberto.")
 
     # ---------------------------
     # Datas
     # ---------------------------
     def carregar_datas(self):
-        ultima = self.ws.range("B" + str(self.ws.cells.last_cell.row)).end("up").row
         datas = []
-        for i in range(1, ultima + 1):
-            v = self.ws.range(f"B{i}").value
+        for row in self.ws1.iter_rows(min_row=2, max_col=2):
+            v = row[1].value
             if isinstance(v, (datetime, date)):
                 datas.append(v.strftime("%d/%m/%Y"))
             elif isinstance(v, str) and "/" in v:
@@ -1025,8 +977,11 @@ class ProgramaCopiarPeriodo:
             print(f"{i} - {d}")
         while True:
             try:
-                return self.datas[int(input("Escolha a data: ")) - 1]
-            except:
+                escolha = int(input("Escolha a data: ")) - 1
+                if 0 <= escolha < len(self.datas):
+                    return self.datas[escolha]
+                print("Opção inválida.")
+            except ValueError:
                 print("Opção inválida.")
 
     def escolher_periodo(self):
@@ -1036,19 +991,24 @@ class ProgramaCopiarPeriodo:
             op = input("Opção: ").strip()
             if op in self.PERIODOS_MENU:
                 return self.PERIODOS_MENU[op]
+            print("Opção inválida.")
 
     # ---------------------------
-    # Localização
+    # Domingos / feriados
+    # ---------------------------
+    def is_dia_bloqueado(self, data_str):
+        d = datetime.strptime(data_str, "%d/%m/%Y").date()
+        return d.weekday() == 6 or d in feriados_br
+
+    # ---------------------------
+    # Localizar linhas
     # ---------------------------
     def encontrar_linha_data(self, data_str):
-        ultima = self.ws.range("B" + str(self.ws.cells.last_cell.row)).end("up").row
-        for i in range(1, ultima + 1):
-            valor = self.ws.range(f"B{i}").value
-            if (
-                isinstance(valor, (datetime, date))
-                and valor.strftime("%d/%m/%Y") == data_str
-            ):
+        for i, row in enumerate(self.ws1.iter_rows(min_row=2), start=2):
+            valor = row[1].value
+            if isinstance(valor, (datetime, date)) and valor.strftime("%d/%m/%Y") == data_str:
                 return i
+            
             elif valor == data_str:
                 return i
         raise Exception(f"Data {data_str} não encontrada.")
@@ -1056,62 +1016,104 @@ class ProgramaCopiarPeriodo:
     def encontrar_total_data(self, linha_data):
         i = linha_data + 1
         while True:
-            valor_c = self.ws.range(f"C{i}").value
-            valor_a = self.ws.range(f"A{i}").value
-            if (
-                isinstance(valor_a, str)
-                and self.normalizar_texto(valor_a) == "totalgeral"
-            ):
-                raise Exception("❌ Total do dia não encontrado antes do Total Geral")
-            if isinstance(valor_c, str) and self.normalizar_texto(valor_c) == "total":
+            valor_c = self.ws1.cell(row=i, column=3).value
+            valor_a = self.ws1.cell(row=i, column=1).value
+            if isinstance(valor_a, str) and valor_a.strip().lower() == "totalgeral":
+                raise Exception("Total do dia não encontrado antes do Total Geral")
+            if isinstance(valor_c, str) and valor_c.strip().lower() == "total":
                 return i
-            if i > self.ws.cells.last_cell.row:
-                raise Exception("❌ Fim da planilha sem encontrar 'Total' do dia")
             i += 1
+            if i > self.ws1.max_row:
+                raise Exception("Fim da planilha sem encontrar 'Total' do dia")
+
+    def encontrar_linha_total_geral(self):
+        for i, row in enumerate(self.ws1.iter_rows(min_row=1), start=1):
+            valor = row[0].value
+            if isinstance(valor, str) and "total" in valor.lower():
+                return i
+        raise Exception("Total Geral não encontrado.")
 
     # ---------------------------
-    # Buscar modelo inteligente
+    # Utilitario
     # ---------------------------
 
+    def normalizar_texto(self, texto):
+        return str(texto).lower().replace(" ", "")
+
+    def normalizar_periodo(self, texto):
+        t = self.normalizar_texto(texto)
+        return self.MAPA_PERIODOS.get(t, None)
+
+    def abrir_arquivo_navio(self, caminho: Path):
+        try:
+            self.caminho_navio = caminho  # <-- guardar caminho real
+            self.wb1 = openpyxl.load_workbook(str(caminho))
+            self.ws1 = self.wb1.active
+            if self.debug:
+                print(f"[DEBUG] Arquivo NAVIO '{caminho}' aberto com sucesso.")
+        except Exception as e:
+            print(f"❌ Erro ao abrir arquivo NAVIO: {e}")
+            self.wb1 = None
+            self.ws1 = None
+
+    
+    def selecionar_arquivo_navio(self) -> Path | None:
+        root = Tk()
+        root.lift()
+        root.attributes("-topmost", True)
+        root.focus_force()
+        root.update()
+        caminho = filedialog.askopenfilename(
+            title="Selecione o arquivo NAVIO",
+            filetypes=[("Arquivos Excel", "*.xlsx")]
+        )
+        root.destroy()
+        if not caminho:
+            return None
+        print(f"📂 Arquivo NAVIO selecionado: {Path(caminho).name}")
+        return Path(caminho)
+
+
+
+    # ---------------------------
+    # Encontrar linha modelo inteligente
+    # ---------------------------
+    
     def encontrar_modelo_periodo_inteligente(self, data_destino, periodo):
-        datas_ordenadas = sorted(self.datas, key=lambda d: self.parse_data(d))
+        datas_ordenadas = sorted(self.datas, key=lambda d: datetime.strptime(d, "%d/%m/%Y"))
         idx = datas_ordenadas.index(data_destino)
         bloco_alvo = self.BLOCOS[periodo]
 
         def procurar_na_data(d, mesmo_dia=False):
             linha_data = self.encontrar_linha_data(d)
             i = linha_data + 1
+            while i <= self.ws1.max_row:
+                valor_a = self.ws1.cell(row=i, column=1).value
+                valor_c = self.ws1.cell(row=i, column=3).value
 
-            while True:
-                valor_a = self.ws.range(f"A{i}").value
-                valor_c = self.ws.range(f"C{i}").value
-
-                if (
-                    isinstance(valor_a, str)
-                    and self.normalizar_texto(valor_a) == "totalgeral"
-                ):
+                # Pula total geral e total do dia
+                if isinstance(valor_a, str) and self.normalizar_texto(valor_a) == "totalgeral":
+                    break
+                if isinstance(valor_c, str) and self.normalizar_texto(valor_c) == "total":
                     break
 
-                if not isinstance(valor_c, str):
+                # Pula células vazias ou não-string
+                if not valor_c or not isinstance(valor_c, str):
                     i += 1
                     continue
 
-                texto = self.normalizar_texto(valor_c)
-                if texto == "total":
-                    break
-
-                p = self.normalizar_periodo(texto)
+                p = self.normalizar_periodo(valor_c)
                 if not p:
                     i += 1
                     continue
 
-                # ✅ MESMO DIA → aceita qualquer equivalente
+                # Mesmo dia → aceita equivalentes
                 if mesmo_dia and p in self.EQUIVALENTES[periodo]:
                     if self.debug:
                         print(f"✔ Mesmo dia: usando {p} de {d}")
                     return i
 
-                # ✅ OUTRO DIA → BLOCO OBRIGATÓRIO
+                # Outro dia → só se mesmo bloco
                 if not mesmo_dia and self.BLOCOS[p] == bloco_alvo:
                     if self.debug:
                         print(f"✔ Outro dia: usando {p} de {d} (bloco {bloco_alvo})")
@@ -1121,121 +1123,142 @@ class ProgramaCopiarPeriodo:
 
             return None
 
-        # 1️⃣ TENTA NA DATA ESCOLHIDA (SEM RESTRIÇÃO)
+        # 1️⃣ tenta na data escolhida
         linha = procurar_na_data(data_destino, mesmo_dia=True)
         if linha:
             return linha
 
-        # 2️⃣ OUTRAS DATAS (SEM DOMINGO / FERIADO)
+        # 2️⃣ tenta em outras datas válidas (não bloqueadas)
         for offset in range(1, len(datas_ordenadas)):
             for novo_idx in (idx + offset, idx - offset):
                 if 0 <= novo_idx < len(datas_ordenadas):
                     d = datas_ordenadas[novo_idx]
-
                     if self.is_dia_bloqueado(d):
-                        if self.debug:
-                            print(f"⛔ Pulando data bloqueada: {d}")
                         continue
-
                     linha = procurar_na_data(d, mesmo_dia=False)
                     if linha:
                         return linha
 
-        raise Exception(
-            f"Nenhum modelo válido encontrado para {periodo} "
-            f"(busca completa realizada)"
-        )
+        raise Exception(f"Nenhum modelo válido encontrado para {periodo}")
 
     # ---------------------------
-    # Copiar e colar
+    # Copiar e colar linha
     # ---------------------------
-
+    
     def copiar_colar(self, data, periodo):
-        # 1️⃣ BLOQUEIO DE CALENDÁRIO
         if self.is_dia_bloqueado(data):
-            print(f"⛔ {data} é domingo ou feriado — período não será criado")
+            print(f"⛔ {data} é domingo/feriado — período não será criado")
             return
 
+        # Encontrar linhas importantes
         linha_data = self.encontrar_linha_data(data)
         linha_total_dia = self.encontrar_total_data(linha_data)
         linha_modelo = self.encontrar_modelo_periodo_inteligente(data, periodo)
-        print(data, "bloqueado?", self.is_dia_bloqueado(data))
 
-        self.ws.api.Rows(linha_total_dia).Insert()
-        ultima_col = self.ws.range("A1").expand("right").last_cell.column
+        # 1️⃣ Inserir nova linha **acima do Total do dia**
+        self.ws1.insert_rows(linha_total_dia)
 
-        origem = self.ws.range((linha_modelo, 1), (linha_modelo, ultima_col))
-        destino = self.ws.range((linha_total_dia, 1), (linha_total_dia, ultima_col))
+        ultima_col = self.ws1.max_column
 
-        origem.copy(destino)
-        destino.api.Font.Bold = True
-        self.ws.range((linha_total_dia, 3)).value = periodo
+        # 2️⃣ Copiar valores da linha modelo (colunas 3 em diante) ignorando None ou 0
+        for col in range(3, ultima_col + 1):
+            origem = self.ws1.cell(row=linha_modelo, column=col)
+            destino = self.ws1.cell(row=linha_total_dia, column=col)
+            if origem.value not in (None, 0):
+                destino.value = origem.value
+                if origem.has_style:
+                    destino.font = copy(origem.font)
+                    destino.fill = copy(origem.fill)
+                    destino.border = copy(origem.border)
+                    destino.alignment = copy(origem.alignment)
 
+        # Atualizar período na coluna C
+        self.ws1.cell(row=linha_total_dia, column=3, value=periodo)
+
+        # 3️⃣ Atualizar totais
+        # Após inserir a linha, o Total do dia original está agora em linha_total_dia + 1
         self.somar_linha_no_total_do_dia(linha_total_dia, linha_total_dia + 1)
         self.somar_linha_no_total_geral(linha_total_dia)
 
+        if self.debug:
+            print(f"✔ Linha {linha_modelo} copiada para {linha_total_dia} com período {periodo}")
+
     # ---------------------------
-    # Soma totais
+    # Somar totais
     # ---------------------------
+
     def somar_linha_no_total_do_dia(self, linha_origem, linha_total_dia):
-        ultima_col = self.ws.range("A1").expand("right").last_cell.column
-        for col in range(4, ultima_col + 1):
-            v_origem = self.ws.range((linha_origem, col)).value
-            v_total = self.ws.range((linha_total_dia, col)).value
+        ultima_col = self.ws1.max_column
+        for col in range(3, ultima_col + 1):
+            v_origem = self.ws1.cell(row=linha_origem, column=col).value
+            v_total = self.ws1.cell(row=linha_total_dia, column=col).value
             try:
-                v_origem = float(v_origem)
+                v_origem_num = float(v_origem)
             except:
-                continue
+                v_origem_num = 0
             try:
-                v_total = float(v_total or 0)
+                v_total_num = float(v_total)
             except:
-                v_total = 0
-            self.ws.range((linha_total_dia, col)).value = v_total + v_origem
+                v_total_num = 0
+            self.ws1.cell(row=linha_total_dia, column=col).value = v_total_num + v_origem_num
         if self.debug:
             print(f"➕ Linha {linha_origem} somada ao TOTAL DO DIA")
 
-    def encontrar_linha_total_geral(self):
-        ultima_linha = self.ws.cells.last_cell.row
-        for i in range(1, ultima_linha + 1):
-            valor_a = self.ws.range(f"A{i}").value
-            if (
-                isinstance(valor_a, str)
-                and self.normalizar_texto(valor_a) == "totalgeral"
-            ):
-                return i
-        raise Exception("Total Geral não encontrado.")
-
     def somar_linha_no_total_geral(self, linha_origem):
         linha_total_geral = self.encontrar_linha_total_geral()
-        ultima_col = self.ws.range("A1").expand("right").last_cell.column
-        for col in range(4, ultima_col + 1):
-            valor_origem = self.ws.range((linha_origem, col)).value
-            if isinstance(valor_origem, (int, float)):
-                celula_total = self.ws.range((linha_total_geral, col))
-                celula_total.value = (celula_total.value or 0) + valor_origem
+        ultima_col = self.ws1.max_column
+        for col in range(3, ultima_col + 1):
+            valor_origem = self.ws1.cell(row=linha_origem, column=col).value
+            try:
+                valor_origem_num = float(valor_origem)
+            except:
+                continue
+            v_total = self.ws1.cell(row=linha_total_geral, column=col).value
+            try:
+                v_total_num = float(v_total)
+            except:
+                v_total_num = 0
+            self.ws1.cell(row=linha_total_geral, column=col).value = v_total_num + valor_origem_num
         if self.debug:
             print(f"➕ Linha {linha_origem} somada ao TOTAL GERAL")
 
     # ---------------------------
     # Executar
     # ---------------------------
-    def executar(self):
-        app = xw.App(visible=False)
-        try:
+
+    def executar(self, usar_arquivo_aberto=False):
+        if not usar_arquivo_aberto:
             caminho = Path.home() / "Desktop" / "1.xlsx"
-            wb = app.books.open(str(caminho))
-            self.ws = wb.sheets[0]
+            if not caminho.exists():
+                print(f"❌ Arquivo não encontrado: {caminho}")
+                return
+            self.caminho_navio = caminho
+            self.wb1 = openpyxl.load_workbook(str(caminho))
+            self.ws1 = self.wb1.active
+        else:
+            if not hasattr(self, "ws1") or self.ws1 is None:
+                print("❌ Planilha não carregada. Use abrir_arquivo_navio() primeiro.")
+                return
+            if not hasattr(self, "caminho_navio"):
+                print("❌ Caminho do arquivo não encontrado.")
+                return
 
-            self.carregar_datas()
-            data = self.escolher_data()
-            periodo = self.escolher_periodo()
+        # fluxo normal
+        self.carregar_datas()
+        data = self.escolher_data()
+        periodo = self.escolher_periodo()
+        print(f"\n✅ Executando FAZER PONTO no NAVIO - Data: {data}, Período: {periodo}")
+        self.copiar_colar(data, periodo)
 
-            self.copiar_colar(data, periodo)
+        # salvar no mesmo local do arquivo original
+        arquivo_saida = self.caminho_navio.parent / "1_atualizado.xlsx"
+        self.wb1.save(str(arquivo_saida))
+        print(f"\n💾 Arquivo NAVIO atualizado salvo em: {arquivo_saida}")
 
-            wb.save(Path.home() / "Desktop" / "1_atualizado.xlsx")
-            print("✔ Arquivo salvo em Desktop/1_atualizado.xlsx")
-        finally:
-            app.quit()
+
+
+class GerarRelatorio:
+    pass
 
 
 # ==============================
@@ -1247,8 +1270,16 @@ class CentralSanport:
     def __init__(self):
         self.completo = FaturamentoCompleto()
         self.de_acordo = FaturamentoDeAcordo()
-
-        self.opcoes = ["FATURAMENTO", "DE ACORDO", "FAZER PONTO", "SAIR DO PROGRAMA"]
+        self.programa_copiar = ProgramaCopiarPeriodo()
+        self.relatorio = GerarRelatorio()   # ✅ nova função
+        self.opcoes = [
+            "FATURAMENTO",
+            "DE ACORDO",
+            "FAZER PONTO",
+            "RELATÓRIO",   # ✅ adiciona no menu
+            "SAIR DO PROGRAMA"
+        ]
+        
 
     # =========================
     # UTILITÁRIOS
@@ -1356,50 +1387,64 @@ class CentralSanport:
 
                     self.pausar_e_voltar(selecionado)
 
+
+
                 # ----------------------------
                 # FAZER PONTO
                 # ----------------------------
-                elif selecionado == 2:
+                elif selecionado == 2:  # FAZER PONTO
+                    programa = ProgramaCopiarPeriodo(debug=True)
+
+                    # Selecionar arquivo NAVIO
+                    caminho_navio = programa.selecionar_arquivo_navio()
+                    if not caminho_navio:
+                        print("⛔ Nenhum arquivo selecionado")
+                        self.pausar_e_voltar(selecionado)
+                        continue
+
+                    # Abrir arquivo NAVIO
+                    programa.abrir_arquivo_navio(caminho_navio)
+
+                    # Executar FAZER PONTO usando o arquivo já aberto
+                    programa.executar(usar_arquivo_aberto=True)
+
+                    self.pausar_e_voltar(selecionado)
+
+
+
+
+
+
+
+
+
+                    # ----------------------------
+                            # RELATÓRIO
+                    # ----------------------------                
+            
+                
+                
+                
+                
+                elif selecionado == 3:   # posição da nova opção
                     print("╔" + "═" * 62 + "╗")
-                    print("║" + " INICIANDO FAZER PONTO... ".center(60) + "║")
+                    print("║" + " INICIANDO RELATÓRIO... ".center(60) + "║")
                     print("╚" + "═" * 62 + "╝\n")
 
                     try:
-                        pasta_faturamentos = obter_pasta_faturamentos()
-                        if not pasta_faturamentos:
-                            print("⛔ Operação cancelada")
-                            self.pausar_e_voltar(selecionado)
-                            continue
-
-                        resultado = abrir_workbooks(pasta_faturamentos)
-                        if not resultado:
-                            print("⛔ Abertura cancelada")
-                            self.pausar_e_voltar(selecionado)
-                            continue
-
-                        app, wb1, wb2, ws1, ws_front = resultado
-
-                        programa = ProgramaCopiarPeriodo(
-                            app=app, wb=wb2, ws=ws_front, debug=False
-                        )
-                        programa.executar()
-
-                        arquivo_saida = Path(wb2.fullname).with_name(
-                            "1_atualizado.xlsx"
-                        )
-                        fechar_workbooks(app, wb1, wb2, arquivo_saida)
-
-                        print("\n✅ FAZER PONTO FINALIZADO COM SUCESSO")
-
+                        self.relatorio.executar()
+                        print("\n✅ RELATÓRIO GERADO COM SUCESSO")
                     except Exception as e:
-                        print(f"\n❌ ERRO NO FAZER PONTO: {e}")
+                        print(f"\n❌ ERRO NO RELATÓRIO: {e}")
 
                     self.pausar_e_voltar(selecionado)
+
+
 
                 # ----------------------------
                 # SAIR
                 # ----------------------------
-                elif selecionado == 3:
+                elif selecionado == 4:
                     self.limpar_tela()
                     print("\n👋 Saindo do programa...")
                     break

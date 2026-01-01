@@ -2,97 +2,105 @@ import xlwings as xw
 from pathlib import Path
 from datetime import datetime, date
 import holidays
-from datetime import datetime
 
 feriados_br = holidays.Brazil()
 
-
 class ProgramaCopiarPeriodo:
-    PERIODOS_MENU = {
-        "1": "06h",
-        "2": "12h",
-        "3": "18h",
-        "4": "00h"
-    }
-
+    PERIODOS_MENU = {"1": "06h", "2": "12h", "3": "18h", "4": "00h"}
     MAPA_PERIODOS = {
-        "06h": "06h",
-        "6h": "06h",
-        "06": "06h",
-
-        "12h": "12h",
-        "12": "12h",
-
-        "18h": "18h",
-        "18": "18h",
-
-        "00h": "00h",
-        "0h": "00h",
-        "00": "00h",
-        "24h": "00h"
+        "06h":"06h", "6h":"06h", "06":"06h",
+        "12h":"12h", "12":"12h",
+        "18h":"18h", "18":"18h",
+        "00h":"00h","0h":"00h","00":"00h","24h":"00h"
     }
+    EQUIVALENTES = {"06h":["06h","12h"],"12h":["12h","06h"],"18h":["18h","00h"],"00h":["00h","18h"]}
+    BLOCOS = {"06h":1,"12h":1,"18h":2,"00h":2}
 
-    EQUIVALENTES = {
-        "06h": ["06h", "12h"],
-        "12h": ["12h", "06h"],
-        "18h": ["18h", "00h"],
-        "00h": ["00h", "18h"]
-    }
-
-    BLOCOS = {
-        "06h": 1,
-        "12h": 1,
-        "18h": 2,
-        "00h": 2
-    }
-
-
-    def __init__(self, ws=None, debug=False):
+    def __init__(self, ws=None, caminho=None, debug=False):
         self.ws = ws
+        self.caminho_navio = caminho
         self.debug = debug
         self.datas = []
 
     # ---------------------------
-    # Utilitários
+    # Selecionar arquivo NAVIO
     # ---------------------------
+    def selecionar_arquivo_navio(self):
+        from tkinter import Tk, filedialog
+        root = Tk()
+        root.withdraw()
+        caminho = filedialog.askopenfilename(
+            title="Selecione o arquivo NAVIO",
+            filetypes=[("Arquivos Excel", "*.xlsx")]
+        )
+        root.destroy()
+        if caminho:
+            self.caminho_navio = Path(caminho)
+            return Path(caminho)
+        return None
 
-    def is_domingo(self, data_str):
-        d = datetime.strptime(data_str, "%d/%m/%Y")
-        return d.weekday() == 6
+    # ---------------------------
+    # Carregar datas da coluna B
+    # ---------------------------
+    def carregar_datas(self):
+        ultima = self.ws.range("B" + str(self.ws.cells.last_cell.row)).end("up").row
+        datas = []
+        for i in range(1, ultima + 1):
+            v = self.ws.range(f"B{i}").value
+            if isinstance(v,(datetime,date)):
+                datas.append(v.strftime("%d/%m/%Y"))
+            elif isinstance(v,str) and "/" in v:
+                datas.append(v.strip())
+        self.datas = list(dict.fromkeys(datas))
+        if not self.datas:
+            raise Exception("Nenhuma data encontrada na coluna B.")
 
-    def is_feriado(self, data_str):
-        d = datetime.strptime(data_str, "%d/%m/%Y")
-        return d in feriados_br
+    # ---------------------------
+    # Escolher data e período
+    # ---------------------------
+    def escolher_data(self):
+        print("\nDatas disponíveis:")
+        for i,d in enumerate(self.datas,1):
+            print(f"{i} - {d}")
+        while True:
+            try:
+                return self.datas[int(input("Escolha a data: "))-1]
+            except:
+                print("Opção inválida.")
 
-    def is_dia_bloqueado(self, data_str):
-        """
-        Retorna True se for domingo ou feriado nacional
-        data_str no formato DD/MM/YYYY
-        """
-        data = datetime.strptime(data_str, "%d/%m/%Y").date()
+    def escolher_periodo(self):
+        print("\nHorário: 1=06h | 2=12h | 3=18h | 4=00h")
+        while True:
+            op = input("Opção: ").strip()
+            if op in self.PERIODOS_MENU:
+                return self.PERIODOS_MENU[op]
 
-        # Domingo
-        if data.weekday() == 6:
-            return True
+    # ---------------------------
+    # Executar FAZER PONTO
+    # ---------------------------
+    def executar(self):
+        app = xw.App(visible=False)
+        try:
+            if not self.ws:
+                if not self.caminho_navio:
+                    self.selecionar_arquivo_navio()
+                wb = app.books.open(str(self.caminho_navio))
+                self.ws = wb.sheets[0]
 
-        # Feriado nacional
-        if data in feriados_br:
-            return True
+            self.carregar_datas()
+            data = self.escolher_data()
+            periodo = self.escolher_periodo()
+            print(f"\n✅ Executando FAZER PONTO - {data} {periodo}")
+            self.copiar_colar(data, periodo)
+            wb.save(self.caminho_navio.parent / "1_atualizado.xlsx")
+            print("✔ Arquivo salvo.")
+        finally:
+            app.quit()
 
-        return False
-
-    def parse_data(self, data_str):
-        return datetime.strptime(data_str, "%d/%m/%Y")
-
-    def normalizar_texto(self, texto):
-        return str(texto).lower().replace(" ", "")
-
-    def normalizar_periodo(self, texto):
-        t = self.normalizar_texto(texto)
-        return self.MAPA_PERIODOS.get(t, None)
-
-
-
+    # ---------------------------
+    # Copiar/colar e somar totais (mesmo código xlwings)
+    # ---------------------------
+    # ... aqui você coloca todo o copiar_colar, somar_linha_no_total_do_dia/geral ...
 
     # ---------------------------
     # Datas
