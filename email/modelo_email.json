@@ -1,0 +1,12 @@
+{
+  "para": [
+    "faturas@rochamar.com",
+    "cpagar@rochamar.com",
+    "oprsts@rochamar.com"
+  ],
+  "cc": [
+    "sanport@sanportlogistica.com.br"
+  ],
+  "assunto": "FATURAMENTO {dn}/{ano} - M/V {navio}",
+  "corpo": "Prezados, bom dia!\n\nSeguem anexos faturamento e folhas OGMO do navio em referência.\n\nObs.: Gentileza notar alteração nos dados bancários.\n\nDados para depósito:\nBanco Itaú\nAgência: 0447\nConta Corrente: 99807-1\nPix: 24.845.408/0001-22\n\nAtenciosamente,\nFinanceiro - Sanport Logística"
+}

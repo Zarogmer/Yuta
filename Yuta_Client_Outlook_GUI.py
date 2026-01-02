@@ -1,5 +1,6 @@
 # ==============================
-# IMPORTS # ==============================
+# IMPORTS PADRÃO
+# ==============================
 import sys
 import re
 import ssl
@@ -10,21 +11,37 @@ import tempfile
 import time
 import os
 import msvcrt
-
 from pathlib import Path
 from itertools import cycle
 from datetime import datetime, date, timedelta, timezone
 
+# ==============================
+# GUI
+# ==============================
 import tkinter as tk
 from tkinter import Tk, filedialog
 
+# ==============================
+# BIBLIOTECAS EXTERNAS
+# ==============================
 import pandas as pd
 import xlwings as xw
 import openpyxl
-from copy import copy  # para copiar estilos
+from copy import copy
 from openpyxl.styles import Font
-
 import holidays
+import subprocess
+import json
+import pythoncom
+import gc
+
+
+# ==============================
+# EMAIL (OUTLOOK)
+# ==============================
+from enviar_email_outlook import enviar_email_outlook
+
+
 
 # instância de feriados do Brasil
 feriados_br = holidays.Brazil()
@@ -42,249 +59,144 @@ for d in feriados_personalizados:
 
 
 
+
 # ==============================
-# FUNÇÕES AUXILIARES GLOBAIS
+# FUNÇÕES AUXILIARES
 # ==============================
 
+    def obter_pasta_faturamentos() -> Path:
+        """Retorna a pasta FATURAMENTOS no Desktop."""
+        pasta = Path.home() / "Desktop" / "FATURAMENTOS"
+        if not pasta.exists():
+            raise FileNotFoundError("❌ Pasta FATURAMENTOS não encontrada no Desktop")
+        return pasta
 
-
-# ---------------------------
-# 1️⃣ Copiar arquivo para pasta temporária e ler Excel
-# ---------------------------
-def copiar_para_temp_e_ler_excel(caminho_original: Path | str) -> pd.DataFrame:
-    caminho_original = Path(caminho_original)
-    if not caminho_original.exists():
-        raise FileNotFoundError(f"Arquivo não encontrado: {caminho_original}")
-
-    with tempfile.TemporaryDirectory() as temp_dir:
-        caminho_temp = Path(temp_dir) / caminho_original.name
-        print(f"Copiando {caminho_original.name} para pasta temporária local...")
-        shutil.copy2(caminho_original, caminho_temp)
-        print(f"Lendo arquivo temporário: {caminho_temp}")
-        df = pd.read_excel(caminho_temp, engine="openpyxl")
-    return df
-
-# ---------------------------
-# 2️⃣ Localizar pasta FATURAMENTOS automaticamente
-# ---------------------------
-def obter_pasta_faturamentos() -> Path:
-    print("\n=== BUSCANDO PASTA FATURAMENTOS AUTOMATICAMENTE ===")
-    possiveis_bases = [
-        Path(r"C:\Users\Carol\SANPORT LOGÍSTICA PORTUÁRIA LTDA"),
-        Path(r"C:\Users\Carol\OneDrive - SANPORT LOGÍSTICA PORTUÁRIA LTDA"),
-        Path.home() / "SANPORT LOGÍSTICA PORTUÁRIA LTDA",
-        Path.home() / "OneDrive" / "SANPORT LOGÍSTICA PORTUÁRIA LTDA",
-    ]
-
-    caminho_alvo = None
-    for base in possiveis_bases:
-        if base.exists():
-            print(f"✅ Encontrada pasta base: {base}")
-            candidatos = list(base.rglob("FATURAMENTOS"))
-            for candidato in candidatos:
-                if "01. FATURAMENTOS" in candidato.parent.as_posix():
-                    caminho_alvo = candidato
-                    print(f"✅ Pasta FATURAMENTOS encontrada em:\n   {caminho_alvo}")
-                    break
-            if caminho_alvo:
-                break
-        else:
-            print(f"❌ Não encontrada: {base}")
-
-    if not caminho_alvo:
-        raise FileNotFoundError("Pasta FATURAMENTOS não localizada automaticamente")
-
-    arquivos_xlsx = list(caminho_alvo.glob("*.xlsx"))
-    print(f"\nArquivos .xlsx encontrados na pasta ({len(arquivos_xlsx)}):")
-    for arq in sorted(arquivos_xlsx)[:10]:
-        print(f"   • {arq.name}")
-    if len(arquivos_xlsx) > 10:
-        print("   ... (mais arquivos)")
-    print("========================================\n")
-    return caminho_alvo
-
-# ---------------------------
-# 3️⃣ Abrir workbooks NAVIO e cliente com xlwings
-# ---------------------------
-def abrir_workbooks(pasta_faturamentos: Path):
-    root = tk.Tk()
-    root.withdraw()
-
-    pasta_navio_str = filedialog.askdirectory(title="Selecione a pasta do NAVIO (onde está o 1.xlsx)")
-    if not pasta_navio_str:
-        print("Seleção cancelada pelo usuário.")
-        return None, None, None, None, None
-
-    pasta_navio = Path(pasta_navio_str)
-    pasta_cliente = pasta_navio.parent
-    nome_cliente = pasta_cliente.name.strip()
-
-    arquivos_1 = list(pasta_navio.glob("1*.xls*"))
-    if not arquivos_1:
-        raise FileNotFoundError(f"Nenhum arquivo iniciando com '1' encontrado em:\n{pasta_navio}")
-
-    arquivo1 = arquivos_1[0]
-    arquivo2 = pasta_faturamentos / f"{nome_cliente}.xlsx"
-    if not arquivo2.exists():
-        raise FileNotFoundError(f"Arquivo de faturamento não encontrado:\n{arquivo2}")
-
-    # abrir com xlwings
-    app = xw.App(visible=False)
-    wb1 = wb2 = None
-    try:
-        wb1 = app.books.open(str(arquivo1))
-        wb2 = app.books.open(str(arquivo2))
-
-        ws1 = wb1.sheets[0]
-        nomes_abas = [s.name for s in wb2.sheets]
-
-        if nome_cliente in nomes_abas:
-            ws_front = wb2.sheets[nome_cliente]
-        elif "FRONT VIGIA" in nomes_abas:
-            ws_front = wb2.sheets["FRONT VIGIA"]
-        else:
-            raise RuntimeError(f"Nenhuma aba válida encontrada em {arquivo2}")
-
-        return app, wb1, wb2, ws1, ws_front
-    except Exception as e:
-        if wb1: wb1.close()
-        if wb2: wb2.close()
-        if app: app.quit()
-        raise e
-
-
-def obter_dn_da_pasta(pasta: Path) -> str:
-    """
-    Extrai o número DN do nome da pasta.
-    Se não encontrar, retorna '0000' e exibe aviso.
-    """
-    numeros = re.findall(r"\d+", pasta.name)
-    if not numeros:
-        print(
-            f"⚠️ Não foi possível identificar o DN no nome da pasta '{pasta.name}', usando '0000' como padrão"
+    def localizar_arquivo_faturamento(pasta_faturamentos: Path, nome_cliente: str) -> Path:
+        """Localiza o arquivo do cliente dentro da pasta de faturamentos."""
+        nome_cliente = nome_cliente.strip().upper()
+        for arq in pasta_faturamentos.glob("*.xlsx"):
+            if arq.stem.strip().upper() == nome_cliente:
+                print(f"📂 Arquivo de faturamento encontrado: {arq.name}\n")
+                return arq
+        raise FileNotFoundError(
+            f"❌ Arquivo '{nome_cliente}.xlsx' não encontrado em {pasta_faturamentos}"
         )
-        return "0000"
-    return numeros[0]
 
+    def selecionar_arquivo_navio() -> str | None:
+        """Abre janela para selecionar arquivo NAVIO (.xlsx)."""
+        root = Tk()
+        root.lift()
+        root.attributes("-topmost", True)
+        root.focus_force()
+        root.update()
+        caminho = filedialog.askopenfilename(
+            title="Selecione o arquivo do NAVIO",
+            filetypes=[("Arquivos Excel", "*.xlsx")]
+        )
+        root.destroy()
+        if not caminho:
+            return None
+        print(f"📂 Arquivo NAVIO selecionado: {Path(caminho).name}")
+        return caminho
 
-def obter_nome_navio_da_pasta(pasta: Path) -> str:
-    nome_limpo = re.sub(r"^\d+[\s\-_]*", "", pasta.name, flags=re.IGNORECASE).strip()
-    return nome_limpo if nome_limpo else "NAVIO NÃO IDENTIFICADO"
+    def abrir_workbooks():
+        """Abre os arquivos NAVIO e FATURAMENTO do cliente e retorna objetos xlwings."""
+        arquivo_navio = selecionar_arquivo_navio()
+        if not arquivo_navio:
+            print("❌ Nenhum arquivo do NAVIO selecionado")
+            return None
 
+        pasta_navio = Path(arquivo_navio).parent
+        nome_cliente = pasta_navio.parent.name.strip().upper()
 
-def fechar_workbooks(app=None, wb_navio=None, wb_cliente=None, arquivo_saida: Path | None = None):
-    """
-    Fecha e salva workbooks de forma defensiva.
-    - app: instância xlwings.App (ou None)
-    - wb_navio: workbook do navio (opcional)
-    - wb_cliente: workbook do cliente (opcional) -> salvo em arquivo_saida se fornecido
-    - arquivo_saida: Path onde salvar o Excel e gerar PDF (opcional)
-    """
-    # salva/expor e fecha com muitos try/except para evitar exceções RPC
-    try:
-        if wb_cliente and arquivo_saida:
-            try:
-                # tenta salvar o workbook do cliente
-                wb_cliente.save(str(arquivo_saida))
-            except Exception as e:
-                print(f"⚠️ Erro ao salvar Excel: {e}")
+        try:
+            pasta_faturamentos = obter_pasta_faturamentos()
+            arquivo_cliente = localizar_arquivo_faturamento(pasta_faturamentos, nome_cliente)
+        except Exception as e:
+            print(e)
+            return None
 
-            try:
-                # tenta exportar para PDF (pode falhar se Excel estiver em estado inválido)
-                pdf_saida = arquivo_saida.with_suffix(".pdf")
-                wb_cliente.api.ExportAsFixedFormat(0, str(pdf_saida))
-            except Exception as e:
-                print(f"⚠️ Erro ao exportar PDF: {e}")
+        app = xw.App(visible=False, add_book=False)
+        app.display_alerts = False
 
-            try:
-                print(f"💾 Arquivo Excel salvo em: {arquivo_saida}")
-                print(f"📑 PDF gerado em: {pdf_saida}")
-            except Exception:
-                pass
+        wb_navio = app.books.open(str(arquivo_navio))
+        wb_cliente = app.books.open(str(arquivo_cliente))
 
-        # fecha workbooks individualmente, cada um em try/except
+        ws_navio = wb_navio.sheets["Resumo"]
+        ws_front = wb_cliente.sheets["FRONT VIGIA"]
+
+        return app, wb_navio, wb_cliente, ws_navio, ws_front
+
+    def fechar_workbooks(app=None, wb_navio=None, wb_cliente=None):
+        """Fecha workbooks e a aplicação xlwings de forma segura."""
         try:
             if wb_navio:
                 wb_navio.close()
-        except Exception as e:
-            print(f"⚠️ Erro ao fechar wb_navio: {e}")
-
-        try:
             if wb_cliente:
                 wb_cliente.close()
-        except Exception as e:
-            print(f"⚠️ Erro ao fechar wb_cliente: {e}")
-
-    finally:
-        # encerra a app somente se ela existir e parecer válida
-        try:
+        finally:
             if app:
-                # proteção extra: algumas versões de xlwings/COM podem lançar se já encerrado
                 app.quit()
-        except Exception as e:
-            print(f"⚠️ Erro ao encerrar app Excel: {e}")
 
 
-def selecionar_arquivo_navio() -> str | None:
-    """
-    Abre uma janela para o usuário selecionar o arquivo NAVIO (.xlsx).
-    A janela aparece em primeiro plano.
-    """
-    root = Tk()
-    root.lift()                         # coloca a janela na frente
-    root.attributes("-topmost", True)   # força ficar em primeiro plano
-    root.focus_force()                  # força foco
-    root.update()                       # aplica imediatamente
-    caminho = filedialog.askopenfilename(
-        title="Selecione o arquivo do NAVIO",
-        filetypes=[("Arquivos Excel", "*.xlsx")]
-    )
-    root.destroy()  # fecha a janela principal depois da seleção
+    def salvar_excel_e_pdf(wb_navio, dn: str, navio: str, pasta_saida: Path):
+        """
+        Salva o Excel com nome formatado e gera PDF.
+        """
+        nome_arquivo = f"FATURAMENTO - DN {dn} - MV {navio}.xlsx"
+        arquivo_excel_saida = pasta_saida / nome_arquivo
 
-    if not caminho:
-        return None
+        # Salvar Excel
+        wb_navio.save(str(arquivo_excel_saida))
 
-    print(f"📂 Arquivo NAVIO selecionado: {Path(caminho).name}")
-    return caminho
+        # Gerar PDF com mesmo nome
+        arquivo_pdf_saida = arquivo_excel_saida.with_suffix(".pdf")
+        wb_navio.api.ExportAsFixedFormat(0, str(arquivo_pdf_saida))
 
+        print(f"💾 Arquivo Excel salvo em: {arquivo_excel_saida}")
+        print(f"📑 PDF gerado em: {arquivo_pdf_saida}")
 
-# ==============================
-# LICENÇA E DATA
-# ==============================
-
-
-def data_online():
-    context = ssl.create_default_context(cafile=certifi.where())
-    req = urllib.request.Request(
-        "https://www.cloudflare.com", headers={"User-Agent": "Mozilla/5.0"}
-    )
-    with urllib.request.urlopen(req, context=context, timeout=5) as r:
-        data_str = r.headers["Date"]
-    dt_utc = datetime.strptime(data_str, "%a, %d %b %Y %H:%M:%S %Z").replace(
-        tzinfo=timezone.utc
-    )
-    dt_local = dt_utc.astimezone()
-    return dt_utc, dt_local
-
-
-def validar_licenca():
-    hoje_utc, hoje_local = data_online()
-
-    # 🔥 define uma data fixa de expiração: 5 de janeiro de 2026
-    limite = datetime(2026, 1, 5, tzinfo=timezone.utc)
-
-    if hoje_utc > limite:
-        sys.exit("⛔ Licença expirada")
-
-    print(f"📅 Data local: {hoje_local.date()}")
+        return arquivo_excel_saida, arquivo_pdf_saida
 
 
 
-# ==============================
-# CLASSE 1: FATURAMENTO COMPLETO
+    def obter_dn_da_pasta(pasta: Path) -> str:
+        numeros = re.findall(r"\d+", pasta.name)
+        if not numeros:
+            print(f"⚠️ DN não encontrado na pasta '{pasta.name}', usando '0000'")
+            return "0000"
+        return numeros[0]
 
+    def obter_nome_navio_da_pasta(pasta: Path) -> str:
+        nome_limpo = re.sub(r"^\d+[\s\-_]*", "", pasta.name, flags=re.IGNORECASE).strip()
+        return nome_limpo if nome_limpo else "NAVIO NÃO IDENTIFICADO"
+
+    # ==============================
+    # LICENÇA ONLINE
+    # ==============================
+
+    def data_online():
+        context = ssl.create_default_context(cafile=certifi.where())
+        req = urllib.request.Request(
+            "https://www.cloudflare.com", headers={"User-Agent": "Mozilla/5.0"}
+        )
+        with urllib.request.urlopen(req, context=context, timeout=5) as r:
+            data_str = r.headers["Date"]
+        dt_utc = datetime.strptime(data_str, "%a, %d %b %Y %H:%M:%S %Z").replace(
+            tzinfo=timezone.utc
+        )
+        dt_local = dt_utc.astimezone()
+        return dt_utc, dt_local
+
+    def validar_licenca():
+        hoje_utc, hoje_local = data_online()
+        limite = datetime(2026, 1, 5, tzinfo=timezone.utc)
+        if hoje_utc > limite:
+            sys.exit("⛔ Licença expirada")
+        print(f"📅 Data local: {hoje_local.date()}")
 
 class FaturamentoCompleto:
+
     def __init__(self, g_logic=1):
         self.app = None
         self.wb1 = None
@@ -295,32 +207,63 @@ class FaturamentoCompleto:
         self.g_logic = g_logic
 
 
-    # ---------------- fluxo principal ----------------
-
-
     def executar(self):
         print("🚀 Iniciando execução...")
-        pasta_faturamentos = obter_pasta_faturamentos()   # pega a pasta automaticamente
-        resultado = abrir_workbooks(pasta_faturamentos)   # passa como argumento
-        ...
 
+        # 🔹 Abrir workbooks (navio e faturamento)
+        resultado = abrir_workbooks()  # sem passar argumento
         if not resultado:
             raise SystemExit("❌ Erro ou pasta inválida")
+
         self.app, self.wb1, self.wb2, self.ws1, self.ws_front = resultado
         print("📂 Workbooks abertos com sucesso!")
+
         try:
+            # 🔹 Processamento principal
             self.processar()
+
+            # 📁 Pasta do navio
+            pasta_navio = Path(self.wb1.fullname).parent
+
+            # 🔹 Obter DN e nome do navio
+            dn = obter_dn_da_pasta(pasta_navio)
+            navio = obter_nome_navio_da_pasta(pasta_navio)
+
+            # 🔹 Construir nomes dos arquivos
+            nome_arquivo_excel = f"FATURAMENTO - DN {dn} - MV {navio}.xlsx"
+            nome_arquivo_pdf = f"FATURAMENTO - DN {dn} - MV {navio}.pdf"
+
+            caminho_excel = pasta_navio / nome_arquivo_excel
+            caminho_pdf = pasta_navio / nome_arquivo_pdf
+
+            # 🔹 Salvar Excel (wb2 = FATURAMENTO)
+            self.wb2.save(str(caminho_excel))
+            print(f"💾 Arquivo Excel salvo em: {caminho_excel}")
+
+            # 🔹 Gerar PDF
+            self.wb2.api.ExportAsFixedFormat(0, str(caminho_pdf))
+            print(f"📑 PDF gerado em: {caminho_pdf}")
+
+            # 🔹 Criar email no Outlook com anexos
+            anexos = [caminho_excel, caminho_pdf]
+            enviar_email_outlook(dn, navio, anexos)
+
+            print("✅ Execução e envio de email concluídos com sucesso!")
+
         except Exception as e:
             print(f"❌ Erro durante o processamento: {e}")
-            # tenta salvar/fechar com segurança usando a função global
             try:
-                pasta_saida = Path(self.wb1.fullname).parent if self.wb1 else None
-                arquivo_saida = (pasta_saida / "3.xlsx") if pasta_saida else None
-                fechar_workbooks(self.app, self.wb1, self.wb2, arquivo_saida)
+                fechar_workbooks(self.app, self.wb1, self.wb2)
             except Exception as e2:
                 print(f"⚠️ Erro ao fechar após falha: {e2}")
-            # re-levanta para o menu tratar ou encerra conforme seu fluxo
             raise
+
+        finally:
+            try:
+                fechar_workbooks(self.app, self.wb1, self.wb2)
+                print("📁 Workbooks fechados com sucesso!")
+            except Exception as e:
+                print(f"⚠️ Erro ao fechar workbooks: {e}")
 
 
     def processar(self):
@@ -329,78 +272,32 @@ class FaturamentoCompleto:
         1) Preenche FRONT VIGIA
         2) Atualiza o REPORT VIGIA (E, G e C)
         """
-
         try:
-
             # ---------- FRONT ----------
             self.preencher_front_vigia()
 
             # ---------- REPORT ----------
             ws_report = self.wb2.sheets["REPORT VIGIA"]
-
-            ...
             self.processar_MMO(self.wb1, self.wb2)
 
-            # 1️⃣ quantidade de períodos (APENAS PARA INSERIR LINHAS)
             qtd_periodos = self.obter_periodos(self.ws1)
 
+            self.inserir_linhas_report(ws_report, linha_inicial=22, periodos=qtd_periodos)
 
-            self.inserir_linhas_report(
-                ws_report,
-                linha_inicial=22,
-                periodos=qtd_periodos
-            )
+            periodos = self.preencher_coluna_E(ws_report, linha_inicial=22, debug=True)
 
-            # 2️⃣ COLUNA E → LISTA DE PERÍODOS
-            periodos = self.preencher_coluna_E(
-                ws_report,
-                linha_inicial=22,
-                debug=True
-            )
+            self.preencher_coluna_G(ws_report, self.ws1, linha_inicial=22, periodos=periodos, debug=True)
 
-
-            # 3️⃣ COLUNA G → VALORES (BASEADO NA E)
-            self.preencher_coluna_G(
-                ws_report,
-                self.ws1,              # ws_resumo
-                linha_inicial=22,
-                periodos=periodos,     # 🔥 lista
-                debug=True
-            )
-
-            # 4️⃣ COLUNA C → DATAS (USA QUANTIDADE DA E)
-            self.montar_datas_report_vigia(
-                ws_report,
-                self.ws1,
-                linha_inicial=22,
-                periodos=len(periodos)  # ⚠️ INT
-            )
+            self.montar_datas_report_vigia(ws_report, self.ws1, linha_inicial=22, periodos=len(periodos))
 
             self.arredondar_para_baixo_50_se_cargonave(self.ws_front)
-
             self._OC()
 
             print("✅ REPORT VIGIA atualizado com sucesso!")
 
-
         except Exception as e:
             print(f"❌ Erro ao atualizar REPORT: {e}")
             raise
-
-        # ---------- SALVA E FECHA ----------
-        try:
-            pasta_saida = Path(self.wb1.fullname).parent if self.wb1 else None
-            arquivo_saida = (pasta_saida / "3.xlsx") if pasta_saida else None
-
-            fechar_workbooks(self.app, self.wb1, self.wb2, arquivo_saida)
-
-            print(f"💾 Arquivo Excel salvo em: {arquivo_saida}")
-
-        except Exception as e:
-            print(f"⚠️ Erro ao salvar/fechar workbooks: {e}")
-            raise
-
-
 
 
 # ===== FRONT ======#
@@ -860,6 +757,7 @@ class FaturamentoCompleto:
         if not datas:
             return None, None
         return min(datas), max(datas)
+
 
 
     def obter_periodos(self, ws_resumo):
@@ -1497,7 +1395,6 @@ class CentralSanport:
                     print("\n👋 Saindo do programa...")
                     break
 
-
 if __name__ == "__main__":
-    validar_licenca()              # 🔥 roda a verificação de licença primeiro
-    CentralSanport().rodar()       # só abre o menu se a licença estiver válida
+    validar_licenca()
+    CentralSanport().rodar()
