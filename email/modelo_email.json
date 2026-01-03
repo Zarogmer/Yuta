@@ -8,5 +8,5 @@
     "sanport@sanportlogistica.com.br"
   ],
   "assunto": "FATURAMENTO {dn}/{ano} - M/V {navio}",
-  "corpo": "Prezados, bom dia!\n\nSeguem anexos faturamento e folhas OGMO do navio em referência.\n\nObs.: Gentileza notar alteração nos dados bancários.\n\nDados para depósito:\nBanco Itaú\nAgência: 0447\nConta Corrente: 99807-1\nPix: 24.845.408/0001-22\n\nAtenciosamente,\nFinanceiro - Sanport Logística"
+  "corpo_html": "<div style='font-family: Arial, sans-serif; font-size: 14px; color: #333;'><p>Prezados, bom dia!</p><p>Seguem anexos: faturamento e folhas OGMO do navio em referência.</p><p><strong>Obs.:</strong> Gentileza notar alteração nos dados bancários.</p><table style='border-collapse: collapse; margin-top: 10px;'><tr><td><strong>Banco:</strong></td><td>Banco Itaú</td></tr><tr><td><strong>Agência:</strong></td><td>0447</td></tr><tr><td><strong>Conta Corrente:</strong></td><td>99807-1</td></tr><tr><td><strong>Pix:</strong></td><td>24.845.408/0001-22</td></tr></table><p style='margin-top: 20px;'>Atenciosamente,<br><strong>Financeiro - Sanport Logística</strong></p></div>"
 }

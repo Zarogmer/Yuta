@@ -141,35 +141,38 @@ for d in feriados_personalizados:
 
     def salvar_excel_e_pdf(wb_navio, dn: str, navio: str, pasta_saida: Path, oc_efetuada: bool):
         """
-        Salva o Excel e o PDF da aba REPORT VIGIA
-        na MESMA pasta do arquivo selecionado.
+        Salva o Excel final e, se houver OC,
+        gera um PDF SEPARADO da aba REPORT VIGIA
+        na MESMA pasta.
         """
-        nome_arquivo = f"FATURAMENTO - DN {dn} - MV {navio}.xlsx"
-        arquivo_excel_saida = pasta_saida / nome_arquivo
 
-        # 💾 Salva Excel
-        wb_navio.save(str(arquivo_excel_saida))
+        # ---------- Excel ----------
+        nome_excel = f"FATURAMENTO - DN {dn} - MV {navio}.xlsx"
+        caminho_excel = pasta_saida / nome_excel
 
-        arquivo_pdf_saida = None
+        wb_navio.save(str(caminho_excel))
+        print(f"💾 Excel salvo em: {caminho_excel}")
+
+        # ---------- PDF REPORT VIGIA ----------
+        caminho_pdf_report = None
         if oc_efetuada:
             ws_report = wb_navio.sheets["REPORT VIGIA"]
 
-            nome_pdf = f"FATURAMENTO - DN {dn} - MV {navio}.pdf"
-            arquivo_pdf_saida = pasta_saida / nome_pdf
+            nome_pdf_report = f"REPORT VIGIA - DN {dn} - MV {navio}.pdf"
+            caminho_pdf_report = pasta_saida / nome_pdf_report
 
             ws_report.api.ExportAsFixedFormat(
                 Type=0,  # PDF
-                Filename=str(arquivo_pdf_saida),
+                Filename=str(caminho_pdf_report),
                 Quality=0,
                 IncludeDocProperties=True,
-                IgnorePrintAreas=False
+                IgnorePrintAreas=False,
+                OpenAfterPublish=False
             )
 
-            print(f"📑 PDF gerado em: {arquivo_pdf_saida}")
+            print(f"📑 PDF SEPARADO do REPORT VIGIA gerado em: {caminho_pdf_report}")
 
-        print(f"💾 Excel salvo em: {arquivo_excel_saida}")
-        return arquivo_excel_saida, arquivo_pdf_saida
-
+        return caminho_excel, caminho_pdf_report
 
 
 
@@ -257,6 +260,7 @@ class FaturamentoCompleto:
             self.wb2.api.ExportAsFixedFormat(0, str(caminho_pdf))
             print(f"📑 PDF gerado em: {caminho_pdf}")
 
+
             # 🔹 Criar email no Outlook com anexos
             anexos = [caminho_excel, caminho_pdf]
             enviar_email_outlook(dn, navio, anexos)
@@ -304,7 +308,16 @@ class FaturamentoCompleto:
             self.montar_datas_report_vigia(ws_report, self.ws1, linha_inicial=22, periodos=len(periodos))
 
             self.arredondar_para_baixo_50_se_cargonave(self.ws_front)
-            self._OC()
+
+            oc_efetuada = self._OC()
+
+            if oc_efetuada:
+                pasta_navio = Path(self.wb1.fullname).parent
+                dn = obter_dn_da_pasta(pasta_navio)
+                navio = obter_nome_navio_da_pasta(pasta_navio)
+
+                self.gerar_pdf_report_vigia_separado(pasta_navio, dn, navio)
+
 
             print("✅ REPORT VIGIA atualizado com sucesso!")
 
@@ -638,14 +651,35 @@ class FaturamentoCompleto:
 
     # ===== ABAS ESPECIFICAS =====#
 
+
     def _OC(self):
         ws = self.wb2.sheets["FRONT VIGIA"]
 
         if str(ws["G16"].value).strip().upper() == "O.C.:":
             valor_oc = input("OC: ")
             ws["H16"].value = valor_oc
-            return True   # sinaliza que OC foi efetuada
-        return False      # sinaliza que não foi efetuada
+            return True
+
+        return False
+
+
+
+    def gerar_pdf_report_vigia_separado(self, pasta_navio: Path, dn: str, navio: str):
+        ws_report = self.wb2.sheets["REPORT VIGIA"]
+
+        nome_pdf = f"REPORT VIGIA - DN {dn} - MV {navio}.pdf"
+        caminho_pdf = pasta_navio / nome_pdf
+
+        ws_report.api.ExportAsFixedFormat(
+            Type=0,  # PDF
+            Filename=str(caminho_pdf),
+            Quality=0,
+            IncludeDocProperties=True,
+            IgnorePrintAreas=False,
+            OpenAfterPublish=False
+        )
+
+        print(f"📑 PDF SEPARADO do REPORT VIGIA salvo em: {caminho_pdf}")
 
 
 

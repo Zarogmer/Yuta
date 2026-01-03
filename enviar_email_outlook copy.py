@@ -34,14 +34,7 @@ def enviar_email_outlook(dn: str, nome_navio: str, anexos=None):
         mail = outlook.CreateItem(0)
 
         mail.Subject = modelo["assunto"].format(**contexto)
-
-        # ✅ Usa HTML se existir, senão cai para texto
-        if "corpo_html" in modelo:
-            mail.HTMLBody = modelo["corpo_html"].format(**contexto)
-        elif "corpo" in modelo:
-            mail.Body = modelo["corpo"].format(**contexto)
-        else:
-            raise KeyError("❌ Modelo JSON não contém 'corpo' ou 'corpo_html'")
+        mail.HTMLBody = modelo["corpo_html"].format(**contexto)
 
         mail.To = "; ".join(modelo["para"])
         mail.CC = "; ".join(modelo.get("cc", []))
