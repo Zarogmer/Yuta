@@ -1,6 +1,6 @@
-
 # ==============================
-# IMPORTS # ==============================
+# IMPORTS
+# ==============================
 import sys
 import re
 import ssl
@@ -41,13 +41,26 @@ from datetime import datetime
 import calendar
 
 
+from pdf2image import convert_from_path
+import pytesseract
+# ==============================
+# OCR CONFIG (Poppler + Tesseract)
+# ==============================
+POPPLER_PATH = r"C:\poppler-25.12.0\Library\bin"
+TESSERACT_EXE = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+TESSDATA_DIR = r"C:\Program Files\Tesseract-OCR\tessdata"
 
+# garante que o pytesseract use o executável certo
+pytesseract.pytesseract.tesseract_cmd = TESSERACT_EXE
 
+# ✅ MUITO IMPORTANTE: aponta onde ficam os idiomas (.traineddata)
+os.environ["TESSDATA_PREFIX"] = TESSDATA_DIR
 
-# instância de feriados do Brasil
+# ==============================
+# FERIADOS
+# ==============================
 feriados_br = holidays.Brazil()
 
-# adicionar feriados personalizados
 feriados_personalizados = [
     date(2025, 1, 1),
     date(2025, 4, 21),
@@ -57,7 +70,6 @@ feriados_personalizados = [
 
 for d in feriados_personalizados:
     feriados_br[d] = "Feriado personalizado"
-
 
 
 # ==============================
@@ -629,7 +641,7 @@ def validar_licenca():
     hoje_utc, hoje_local = data_online()
 
     # 🔥 define uma data fixa de expiração: 5 de janeiro de 2026
-    limite = datetime(2026, 1, 30, tzinfo=timezone.utc)
+    limite = datetime(2026, 2, 25, tzinfo=timezone.utc)
 
     if hoje_utc > limite:
         sys.exit("⛔ Licença expirada")
@@ -2610,37 +2622,95 @@ class FaturamentoSaoSebastiao:
         for p in self.caminhos_pdfs:
             print(f"   - {p.name}")
 
-    def carregar_pdfs(self):
-        print("📖 Lendo PDFs...")
+    def _carregar_pdfs_com_ocr(self, dpi: int = 350, lang: str = "por"):
+        """
+        Fallback OCR quando pdfplumber não extrai texto (PDF escaneado).
+
+        Requer:
+        - pip install pytesseract pdf2image pillow
+        - Tesseract instalado no Windows
+        - Poppler instalado (pdf2image)
+        """
+
+        try:
+            from pdf2image import convert_from_path
+            import pytesseract
+            import os
+        except Exception as e:
+            raise RuntimeError(
+                "OCR não disponível.\n"
+                "Instale:\n"
+                "  pip install pytesseract pdf2image pillow\n"
+                "E instale Tesseract + Poppler no Windows."
+            ) from e
+
+        POPPLER_PATH = r"C:\poppler-25.12.0\Library\bin"
+        TESSERACT_EXE = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+        TESSDATA_DIR  = r"C:\Program Files\Tesseract-OCR\tessdata"
+
+        # ✅ fixa o executável do tesseract (não depende de PATH)
+        pytesseract.pytesseract.tesseract_cmd = TESSERACT_EXE
+
+        # ✅ garante que o tesseract acha os idiomas (por.traineddata)
+        os.environ["TESSDATA_PREFIX"] = TESSDATA_DIR
+
+        # ✅ parâmetros recomendados (bom pra tabela/texto estruturado)
+        # ⚠️ NÃO use --tessdata-dir aqui (no Windows dá bug com aspas)
+        tesseract_config = "--oem 3 --psm 6"
+
         self.paginas_texto.clear()
 
         total_paginas = 0
-        paginas_sem_texto = 0
+        paginas_com_texto = 0
+
+        print("📸 PDF escaneado detectado — aplicando OCR...")
 
         for caminho in self.caminhos_pdfs:
-            with pdfplumber.open(caminho) as pdf:
-                for idx, pagina in enumerate(pdf.pages, start=1):
-                    total_paginas += 1
+            print(f"   🔍 OCR em: {caminho.name}")
 
-                    texto = pagina.extract_text()
-                    if texto and texto.strip():
-                        self.paginas_texto.append({
-                            "pdf": caminho.name,
-                            "page": idx,
-                            "texto": texto
-                        })
-                    else:
-                        paginas_sem_texto += 1
+            try:
+                imagens = convert_from_path(
+                    str(caminho),
+                    dpi=dpi,
+                    grayscale=True,
+                    poppler_path=POPPLER_PATH
+                )
+            except Exception as e:
+                raise RuntimeError(
+                    f"Erro ao converter PDF em imagens (OCR): {caminho.name}\n"
+                    f"Detalhes: {e}"
+                ) from e
+
+            for idx, img in enumerate(imagens, start=1):
+                total_paginas += 1
+
+                texto = pytesseract.image_to_string(
+                    img,
+                    lang=lang,
+                    config=tesseract_config
+                )
+                texto = (texto or "").strip()
+
+                if texto:
+                    paginas_com_texto += 1
+                    self.paginas_texto.append({
+                        "pdf": caminho.name,
+                        "page": idx,
+                        "texto": texto
+                    })
 
         if not self.paginas_texto:
             raise RuntimeError(
-                "PDFs sem páginas válidas (sem texto extraível). "
-                "Provável PDF escaneado/imagem."
+                "OCR também não conseguiu extrair texto.\n"
+                "Possível causa:\n"
+                "- Scan com qualidade muito baixa\n"
+                "- PDF protegido\n"
+                "- Documento com colunas muito comprimidas"
             )
 
-        print(f"✅ PDFs convertidos em texto ({len(self.paginas_texto)} páginas com texto / {total_paginas} páginas no total)")
-        if paginas_sem_texto:
-            print(f"⚠️ Aviso: {paginas_sem_texto} página(s) sem texto extraível (provável imagem).")
+        print(f"✅ OCR OK ({paginas_com_texto} páginas com texto / {total_paginas} páginas no total)")
+
+        self.texto_pdf = "\n\n".join([it["texto"] for it in self.paginas_texto])
 
 
     def normalizar_texto_mantendo_linhas(self):
@@ -2657,84 +2727,185 @@ class FaturamentoSaoSebastiao:
 
         self.texto_pdf = "\n\n".join(blocos)
 
-    # ==================================================
-    # EXTRAÇÃO: PERÍODO E HORÁRIOS
-    # ==================================================
-    def extrair_periodo_por_data(self) -> tuple[str, str]:
-        padrao = (
-            r"Período\s*Inicial\s*(\d{2}/\d{2}/\d{4}).*?"
-            r"Período\s*Final\s*(\d{2}/\d{2}/\d{4})"
-        )
 
-        encontrados = re.findall(padrao, self.texto_pdf, flags=re.IGNORECASE | re.DOTALL)
-        if not encontrados:
+
+    # ==================================================
+    # PDF ORDER (OGMO 1..N)  -> agora retorna Path (não só nome)
+    # ==================================================
+    def _ordenar_pdfs_ogmo(self) -> list[Path]:
+        """
+        Retorna a lista de Paths ordenada pelo número do arquivo:
+        FOLHAS OGMO 1.pdf, 2.pdf, 3.pdf ...
+        Se não achar número, joga pro final mantendo ordem original.
+        """
+        def idx(p: Path) -> int:
+            nome = p.name
+            m = re.search(r"\bOGMO\s*(\d+)\b|\b(\d+)\b", nome, re.IGNORECASE)
+            if not m:
+                return 10_000
+            g = m.group(1) or m.group(2)
+            try:
+                return int(g)
+            except Exception:
+                return 10_000
+
+        return sorted(self.caminhos_pdfs, key=idx)
+
+
+    def _pdfs_ordenados_nomes(self) -> list[str]:
+        """Nomes ordenados (string) - útil se você quiser logar."""
+        return [p.name for p in self._ordenar_pdfs_ogmo()]
+
+
+    # ==================================================
+    # EXTRAÇÃO - DATA (tolerante a OCR) por PDF (case-insensitive)
+    # ==================================================
+    def extrair_periodo_por_data(self, pdf_alvo: str | None = None) -> tuple[str, str]:
+        if pdf_alvo:
+            alvo_norm = pdf_alvo.strip().lower()
+            textos = [
+                it["texto"] for it in self.paginas_texto
+                if str(it.get("pdf", "")).strip().lower() == alvo_norm
+            ]
+            texto_busca = "\n".join(textos).strip()
+        else:
+            texto_busca = (self.texto_pdf or "").strip()
+
+        if not texto_busca:
+            raise RuntimeError("Período não encontrado no PDF (texto vazio).")
+
+        t = texto_busca.replace("\u00ad", "")
+        t = re.sub(r"[ \t]+", " ", t)
+
+        per = r"Per(?:[íi]|l|1|f|0)?odo"
+        ini = r"Inic(?:ial|iaI|ia1|lal)"
+        fim = r"Fina(?:l|I|1)"
+        data = r"(\d{1,2}/\d{1,2}/\d{4})"
+
+        padrao = rf"{per}\s*{ini}.*?{data}.*?{per}\s*{fim}.*?{data}"
+        m = re.search(padrao, t, flags=re.IGNORECASE | re.DOTALL)
+
+        if not m:
+            datas = re.findall(r"\d{1,2}/\d{1,2}/\d{4}", t)
+            if len(datas) >= 2:
+                return datas[0], datas[1]
             raise RuntimeError("Período não encontrado no PDF")
 
-        # converte e pega min/max
-        datas_ini = []
-        datas_fim = []
-        for ini, fim in encontrados:
-            datas_ini.append(datetime.strptime(ini, "%d/%m/%Y").date())
-            datas_fim.append(datetime.strptime(fim, "%d/%m/%Y").date())
+        return m.group(1), m.group(2)
 
-        ini_final = min(datas_ini).strftime("%d/%m/%Y")
-        fim_final = max(datas_fim).strftime("%d/%m/%Y")
-        return ini_final, fim_final
-
+    # ==================================================
+    # EXTRAÇÃO - HORÁRIO (tolerante a OCR) por PDF (case-insensitive)
+    # ==================================================
     def extrair_periodo_por_horario(self, pdf_alvo: str | None = None) -> tuple[str, str]:
         """
-        Extrai PERÍODO INICIAL e PERÍODO FINAL do OGMO
-        e NORMALIZA para o padrão:
-            07x13, 13x19, 19x01, 01x07
+        Extrai horários do OGMO e normaliza para:
+        07x13, 13x19, 19x01, 01x07
+        Tolerante a OCR: Período / Periodo / Perfodo
         """
-
-        # 🔹 texto de busca
         if pdf_alvo:
-            textos = [it["texto"] for it in self.paginas_texto if it.get("pdf") == pdf_alvo]
-            texto_busca = "\n".join(textos)
+            alvo_norm = pdf_alvo.strip().lower()
+            textos = [
+                it["texto"] for it in self.paginas_texto
+                if str(it.get("pdf", "")).strip().lower() == alvo_norm
+            ]
+            texto_busca = "\n".join(textos).strip()
         else:
-            texto_busca = self.texto_pdf
+            texto_busca = (self.texto_pdf or "").strip()
 
-        # 🔹 regex tolerante a OCR ruim
+        if pdf_alvo and not texto_busca:
+            raise RuntimeError(
+                f"PDF {pdf_alvo} não tem texto extraível nas páginas lidas (provável imagem/scan)."
+            )
+
+        per = r"Per(?:[íi]|f)?odo"
         padrao = (
-            r"Per[ií]odo\s*Inicial.*?(\d{1,2})\s*[x×h\-]\s*(\d{1,2}).*?"
-            r"Per[ií]odo\s*Final.*?(\d{1,2})\s*[x×h\-]\s*(\d{1,2})"
+            rf"{per}\s*Inicial.*?(\d{{1,2}})\s*[x×h\-]\s*(\d{{1,2}}).*?"
+            rf"{per}\s*Final.*?(\d{{1,2}})\s*[x×h\-]\s*(\d{{1,2}})"
         )
 
         m = re.search(padrao, texto_busca, re.IGNORECASE | re.DOTALL)
         if not m:
-            raise RuntimeError("Horários (Período Inicial / Final) não encontrados no PDF")
+            raise RuntimeError(
+                f"Horários (Período Inicial/Final) não encontrados no PDF {pdf_alvo}" if pdf_alvo
+                else "Horários (Período Inicial/Final) não encontrados no PDF"
+            )
 
         hi_ini, hf_ini, hi_fim, hf_fim = m.groups()
 
         def normalizar(h1: str, h2: str) -> str:
-            """
-            Normaliza horários para o padrão OGMO:
-            07x13, 13x19, 19x01, 01x07
-            """
             a = int(h1) % 24
             b = int(h2) % 24
-            return f"{str(a).zfill(2)}x{str(b).zfill(2)}"
+            return f"{a:02d}x{b:02d}"
 
         periodo_inicial = normalizar(hi_ini, hf_ini)
         periodo_final = normalizar(hi_fim, hf_fim)
 
-        # 🔒 validação final (regra OGMO SSZ)
         ordem = {"07x13", "13x19", "19x01", "01x07"}
-
         if periodo_inicial not in ordem:
             raise RuntimeError(f"Período inicial inválido após normalização: {periodo_inicial}")
-
         if periodo_final not in ordem:
             raise RuntimeError(f"Período final inválido após normalização: {periodo_final}")
-
-        print(f"✔ Período Inicial: {periodo_inicial}")
-        print(f"✔ Período Final:   {periodo_final}")
 
         return periodo_inicial, periodo_final
 
 
-    
+    # ==================================================
+    # PERÍODO MESCLADO N PDFs (primeiro que tem INI, último que tem FIM)
+    # ==================================================
+    def extrair_periodo_mesclado_n(self) -> tuple[str, str, str, str]:
+        """
+        Para OGMO 1..N (robusto):
+        - data_ini/periodo_ini: vem do PRIMEIRO PDF (na ordem) que conseguir extrair
+        - data_fim/periodo_fim: vem do ÚLTIMO PDF (na ordem) que conseguir extrair
+
+        Isso evita quebrar quando OGMO 1 ou o último estiverem escaneados (sem texto).
+        """
+        pdfs = self._ordenar_pdfs_ogmo()
+        if not pdfs:
+            raise RuntimeError("Nenhum PDF selecionado.")
+
+        # 1) acha INÍCIO (primeiro que tem)
+        ini_pdf = None
+        data_ini = periodo_ini = None
+
+        for p in pdfs:
+            try:
+                di, _ = self.extrair_periodo_por_data(p.name)
+                pi, _ = self.extrair_periodo_por_horario(p.name)
+                ini_pdf = p.name
+                data_ini = di
+                periodo_ini = pi
+                break
+            except Exception:
+                continue
+
+        # 2) acha FIM (último que tem)
+        fim_pdf = None
+        data_fim = periodo_fim = None
+
+        for p in reversed(pdfs):
+            try:
+                _, df = self.extrair_periodo_por_data(p.name)
+                _, pf = self.extrair_periodo_por_horario(p.name)
+                fim_pdf = p.name
+                data_fim = df
+                periodo_fim = pf
+                break
+            except Exception:
+                continue
+
+        if not ini_pdf:
+            raise RuntimeError("Não consegui extrair Período Inicial de nenhum PDF (todos sem texto/fora do padrão).")
+        if not fim_pdf:
+            raise RuntimeError("Não consegui extrair Período Final de nenhum PDF (todos sem texto/fora do padrão).")
+
+        print(f"✔ Início extraído de: {ini_pdf} -> {data_ini} {periodo_ini}")
+        print(f"✔ Fim extraído de:    {fim_pdf} -> {data_fim} {periodo_fim}")
+
+        return data_ini, data_fim, periodo_ini, periodo_fim
+
+
+
 
     # ==================================================
     # EXTRAÇÃO: LAYOUT SS (WILSON SS / SEA SIDE PSS)
@@ -2894,20 +3065,6 @@ class FaturamentoSaoSebastiao:
         return total
 
 
-    def _br_or_us_to_float(self, valor) -> float:
-        if valor in (None, "", "NÃO ENCONTRADO"):
-            return 0.0
-        if isinstance(valor, (int, float)):
-            return float(valor)
-
-        s = str(valor).strip()
-
-        # pt-BR
-        if "," in s:
-            return float(s.replace(".", "").replace(",", "."))
-
-        # US
-        return float(s)
 
 
     def _somar_valor_apos_rotulo(self, regex_nome: str, paginas_validas: set[int] | None = None, lookahead: int = 12) -> float:
@@ -3271,184 +3428,6 @@ class FaturamentoSaoSebastiao:
 
 
 
-    # ==================================================
-    # PDF ORDER (OGMO 1..N)  -> agora retorna Path (não só nome)
-    # ==================================================
-    def _ordenar_pdfs_ogmo(self) -> list[Path]:
-        """
-        Retorna a lista de Paths ordenada pelo número do arquivo:
-        FOLHAS OGMO 1.pdf, 2.pdf, 3.pdf ...
-        Se não achar número, joga pro final mantendo ordem original.
-        """
-        def idx(p: Path) -> int:
-            nome = p.name
-            m = re.search(r"\bOGMO\s*(\d+)\b|\b(\d+)\b", nome, re.IGNORECASE)
-            if not m:
-                return 10_000
-            g = m.group(1) or m.group(2)
-            try:
-                return int(g)
-            except Exception:
-                return 10_000
-
-        return sorted(self.caminhos_pdfs, key=idx)
-
-
-    def _pdfs_ordenados_nomes(self) -> list[str]:
-        """Nomes ordenados (string) - útil se você quiser logar."""
-        return [p.name for p in self._ordenar_pdfs_ogmo()]
-
-
-    # ==================================================
-    # EXTRAÇÃO - DATA (tolerante a OCR) por PDF (case-insensitive)
-    # ==================================================
-    def extrair_periodo_por_data(self, pdf_alvo: str | None = None) -> tuple[str, str]:
-        """
-        Busca Período Inicial/Final (datas) num PDF específico (ou no texto geral).
-        Tolerante a OCR: Período / Periodo / Perfodo
-        """
-        if pdf_alvo:
-            alvo_norm = pdf_alvo.strip().lower()
-            textos = [
-                it["texto"] for it in self.paginas_texto
-                if str(it.get("pdf", "")).strip().lower() == alvo_norm
-            ]
-            texto_busca = "\n".join(textos).strip()
-        else:
-            texto_busca = (self.texto_pdf or "").strip()
-
-        # Se o PDF alvo não teve texto extraído (escaneado), já acusa isso claramente
-        if pdf_alvo and not texto_busca:
-            raise RuntimeError(
-                f"PDF {pdf_alvo} não tem texto extraível nas páginas lidas (provável imagem/scan)."
-            )
-
-        per = r"Per(?:[íi]|f)?odo"  # Período / Periodo / Perfodo
-
-        padrao = (
-            rf"{per}\s*Inicial\s*(\d{{2}}/\d{{2}}/\d{{4}}).*?"
-            rf"{per}\s*Final\s*(\d{{2}}/\d{{2}}/\d{{4}})"
-        )
-
-        m = re.search(padrao, texto_busca, re.IGNORECASE | re.DOTALL)
-        if not m:
-            raise RuntimeError(f"Período não encontrado no PDF {pdf_alvo}" if pdf_alvo else "Período não encontrado no PDF")
-
-        return m.group(1), m.group(2)
-
-
-    # ==================================================
-    # EXTRAÇÃO - HORÁRIO (tolerante a OCR) por PDF (case-insensitive)
-    # ==================================================
-    def extrair_periodo_por_horario(self, pdf_alvo: str | None = None) -> tuple[str, str]:
-        """
-        Extrai horários do OGMO e normaliza para:
-        07x13, 13x19, 19x01, 01x07
-        Tolerante a OCR: Período / Periodo / Perfodo
-        """
-        if pdf_alvo:
-            alvo_norm = pdf_alvo.strip().lower()
-            textos = [
-                it["texto"] for it in self.paginas_texto
-                if str(it.get("pdf", "")).strip().lower() == alvo_norm
-            ]
-            texto_busca = "\n".join(textos).strip()
-        else:
-            texto_busca = (self.texto_pdf or "").strip()
-
-        if pdf_alvo and not texto_busca:
-            raise RuntimeError(
-                f"PDF {pdf_alvo} não tem texto extraível nas páginas lidas (provável imagem/scan)."
-            )
-
-        per = r"Per(?:[íi]|f)?odo"
-        padrao = (
-            rf"{per}\s*Inicial.*?(\d{{1,2}})\s*[x×h\-]\s*(\d{{1,2}}).*?"
-            rf"{per}\s*Final.*?(\d{{1,2}})\s*[x×h\-]\s*(\d{{1,2}})"
-        )
-
-        m = re.search(padrao, texto_busca, re.IGNORECASE | re.DOTALL)
-        if not m:
-            raise RuntimeError(
-                f"Horários (Período Inicial/Final) não encontrados no PDF {pdf_alvo}" if pdf_alvo
-                else "Horários (Período Inicial/Final) não encontrados no PDF"
-            )
-
-        hi_ini, hf_ini, hi_fim, hf_fim = m.groups()
-
-        def normalizar(h1: str, h2: str) -> str:
-            a = int(h1) % 24
-            b = int(h2) % 24
-            return f"{a:02d}x{b:02d}"
-
-        periodo_inicial = normalizar(hi_ini, hf_ini)
-        periodo_final = normalizar(hi_fim, hf_fim)
-
-        ordem = {"07x13", "13x19", "19x01", "01x07"}
-        if periodo_inicial not in ordem:
-            raise RuntimeError(f"Período inicial inválido após normalização: {periodo_inicial}")
-        if periodo_final not in ordem:
-            raise RuntimeError(f"Período final inválido após normalização: {periodo_final}")
-
-        return periodo_inicial, periodo_final
-
-
-    # ==================================================
-    # PERÍODO MESCLADO N PDFs (primeiro que tem INI, último que tem FIM)
-    # ==================================================
-    def extrair_periodo_mesclado_n(self) -> tuple[str, str, str, str]:
-        """
-        Para OGMO 1..N (robusto):
-        - data_ini/periodo_ini: vem do PRIMEIRO PDF (na ordem) que conseguir extrair
-        - data_fim/periodo_fim: vem do ÚLTIMO PDF (na ordem) que conseguir extrair
-
-        Isso evita quebrar quando OGMO 1 ou o último estiverem escaneados (sem texto).
-        """
-        pdfs = self._ordenar_pdfs_ogmo()
-        if not pdfs:
-            raise RuntimeError("Nenhum PDF selecionado.")
-
-        # 1) acha INÍCIO (primeiro que tem)
-        ini_pdf = None
-        data_ini = periodo_ini = None
-
-        for p in pdfs:
-            try:
-                di, _ = self.extrair_periodo_por_data(p.name)
-                pi, _ = self.extrair_periodo_por_horario(p.name)
-                ini_pdf = p.name
-                data_ini = di
-                periodo_ini = pi
-                break
-            except Exception:
-                continue
-
-        # 2) acha FIM (último que tem)
-        fim_pdf = None
-        data_fim = periodo_fim = None
-
-        for p in reversed(pdfs):
-            try:
-                _, df = self.extrair_periodo_por_data(p.name)
-                _, pf = self.extrair_periodo_por_horario(p.name)
-                fim_pdf = p.name
-                data_fim = df
-                periodo_fim = pf
-                break
-            except Exception:
-                continue
-
-        if not ini_pdf:
-            raise RuntimeError("Não consegui extrair Período Inicial de nenhum PDF (todos sem texto/fora do padrão).")
-        if not fim_pdf:
-            raise RuntimeError("Não consegui extrair Período Final de nenhum PDF (todos sem texto/fora do padrão).")
-
-        print(f"✔ Início extraído de: {ini_pdf} -> {data_ini} {periodo_ini}")
-        print(f"✔ Fim extraído de:    {fim_pdf} -> {data_fim} {periodo_fim}")
-
-        return data_ini, data_fim, periodo_ini, periodo_fim
-
-
 
 
     # ==================================================
@@ -3556,47 +3535,13 @@ class FaturamentoSaoSebastiao:
         return nomes[0], nomes[-1]
 
 
-    def extrair_periodo_por_data(self, pdf_alvo: str | None = None) -> tuple[str, str]:
-        """
-        Se pdf_alvo for informado, busca o período apenas naquele PDF (todas as páginas dele).
-        """
-        if pdf_alvo:
-            textos = [it["texto"] for it in self.paginas_texto if it.get("pdf") == pdf_alvo]
-            texto_busca = "\n".join(textos)
-        else:
-            texto_busca = self.texto_pdf
-
-        padrao = (
-            r"Período\s*Inicial\s*(\d{2}/\d{2}/\d{4}).*?"
-            r"Período\s*Final\s*(\d{2}/\d{2}/\d{4})"
-        )
-        m = re.search(padrao, texto_busca, re.IGNORECASE | re.DOTALL)
-        if not m:
-            raise RuntimeError(f"Período não encontrado no PDF{' ' + pdf_alvo if pdf_alvo else ''}")
-
-        return m.group(1), m.group(2)
-
-
-    def extrair_periodo_mesclado(self) -> tuple[str, str]:
-        """
-        Quando existem 2 PDFs:
-        - Período Inicial vem do OGMO 1
-        - Período Final vem do OGMO 2
-        """
-        pdf_ini, pdf_fim = self._escolher_pdf_inicio_fim()
-
-        ini, _ = self.extrair_periodo_por_data(pdf_ini)
-        _, fim = self.extrair_periodo_por_data(pdf_fim)
-
-        return ini, fim
-
 
     # ==================================================
     # EXECUÇÃO PRINCIPAL
     # ==================================================
     def executar(self):
         self.selecionar_pdfs_ogmo()
-        self.carregar_pdfs()
+        self._carregar_pdfs_com_ocr()
         self.normalizar_texto_mantendo_linhas()
 
         cliente, porto = self.identificar_cliente_e_porto()
@@ -3614,6 +3559,7 @@ class FaturamentoSaoSebastiao:
 
         app = xw.App(visible=False, add_book=False)
         wb = app.books.open(str(caminho_local))
+
 
         try:
             pasta = self.caminhos_pdfs[0].parent
