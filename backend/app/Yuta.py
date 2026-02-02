@@ -3248,6 +3248,9 @@ class FaturamentoSaoSebastiao:
     # ==================================================
     # REPORT VIGIA - LAYOUT SS (Wilson SS / Sea Side PSS)
     # ==================================================
+
+
+
     def colar_report_layout_ss(self, wb):
         aba = next(s for s in wb.sheets if s.name.strip().lower() == "report vigia")
         print("📌 Report (layout SS) – colando valores fixos")
@@ -3267,7 +3270,6 @@ class FaturamentoSaoSebastiao:
 
         for chave, celula in MAPA_FIXO.items():
             aba.range(celula).value = float(self.dados.get(chave, 0.0) or 0.0)
-
 
 
     def _garantir_linhas_report(self, aba, linha_base: int, total_linhas: int):
@@ -3540,7 +3542,6 @@ class FaturamentoSaoSebastiao:
         print(f"✔ Colado {n} períodos + tarifa (status={status}) a partir de C{linha_base}/E{linha_base}")
 
 
-
     def gerar_periodos_report_padrao_ssz_por_dia(self, data_ini, data_fim, periodo_inicial, periodo_final):
         ordem = ["07x13", "13x19", "19x01", "01x07"]
 
@@ -3623,6 +3624,54 @@ class FaturamentoSaoSebastiao:
             return d
         raise ValueError(f"Data inválida para Excel: {d!r}")
 
+
+    def extrair_periodo_mesclado_n(self) -> tuple[str, str, str, str]:
+        """
+        Retorna (data_ini, data_fim, periodo_ini, periodo_fim)
+        usando:
+        - OGMO menor número = inicio
+        - OGMO maior número = fim
+        Funciona com 1 ou N PDFs.
+        """
+        pdfs = self._ordenar_pdfs_ogmo()
+        if not pdfs:
+            raise RuntimeError("Nenhum PDF selecionado.")
+
+        p_ini = self._achar_pdf_menor_numero() or pdfs[0]
+        p_fim = self._achar_pdf_maior_numero() or pdfs[-1]
+
+        try:
+            di, _ = self.extrair_periodo_por_data(p_ini.name)
+        except Exception as e:
+            raise RuntimeError(
+                f"Não consegui extrair DATA INICIAL do OGMO {self._numero_ogmo(p_ini.name)} ({p_ini.name}). Erro: {e}"
+            ) from e
+
+        try:
+            _, df = self.extrair_periodo_por_data(p_fim.name)
+        except Exception as e:
+            raise RuntimeError(
+                f"Não consegui extrair DATA FINAL do OGMO {self._numero_ogmo(p_fim.name)} ({p_fim.name}). Erro: {e}"
+            ) from e
+
+        try:
+            pi, _ = self.extrair_periodo_por_horario(p_ini.name)
+        except Exception as e:
+            raise RuntimeError(
+                f"Não consegui extrair PERÍODO INICIAL do OGMO {self._numero_ogmo(p_ini.name)} ({p_ini.name}). Erro: {e}"
+            ) from e
+
+        try:
+            _, pf = self.extrair_periodo_por_horario(p_fim.name)
+        except Exception as e:
+            raise RuntimeError(
+                f"Não consegui extrair PERÍODO FINAL do OGMO {self._numero_ogmo(p_fim.name)} ({p_fim.name}). Erro: {e}"
+            ) from e
+
+        print(f"✔ Data inicial de: {p_ini.name} -> {di} ({pi})")
+        print(f"✔ Data final de:   {p_fim.name} -> {df} ({pf})")
+
+        return di, df, pi, pf
 
 
 
@@ -3755,6 +3804,7 @@ class FaturamentoSaoSebastiao:
     # ==================================================
     # EXECUÇÃO PRINCIPAL
     # ==================================================
+
     def executar(self):
         self.selecionar_pdfs_ogmo()
         self.carregar_pdfs()   # já faz pdfplumber e OCR só se precisar
