@@ -38,37 +38,35 @@
 <script>
   const log = (x) => document.getElementById("log").textContent = x;
 
-  async function carregar() {
-    try {
-      const r = await fetch("http://127.0.0.1:8000/menu")
-;
-      const j = await r.json();
-      const div = document.getElementById("botoes");
-      div.innerHTML = "";
+async function carregar() {
+  try {
+    log("Carregando menu...");
+    const r = await fetch("http://127.0.0.1:8000/menu");
 
-      j.opcoes.forEach((nome, i) => {
-        const b = document.createElement("button");
-        b.textContent = "▶ " + nome;
-        b.onclick = () => executar(i);
-        div.appendChild(b);
-      });
-
-      log("Pronto. Clique em uma opção.");
-    } catch (e) {
-      log("Erro carregando menu: " + e);
+    if (!r.ok) {
+      const t = await r.text();
+      log("Erro HTTP: " + r.status + "\n" + t);
+      return;
     }
-  }
 
-  async function executar(indice) {
-    try {
-      log("Executando opção " + indice + "...");
-      const r = await fetch("http://127.0.0.1:8000/menu/acao/" + indice, { method: "POST" });
-      const j = await r.json();
-      log(JSON.stringify(j, null, 2));
-    } catch (e) {
-      log("Erro executando: " + e);
-    }
+    const j = await r.json();
+    log("Menu carregado!");
+
+    const div = document.getElementById("botoes");
+    div.innerHTML = "";
+
+    j.opcoes.forEach((nome, i) => {
+      const b = document.createElement("button");
+      b.textContent = "▶ " + nome;
+      b.onclick = () => executar(i);
+      div.appendChild(b);
+    });
+
+    log("Pronto. Clique em uma opção.");
+  } catch (e) {
+    log("Falhou no fetch (provável CORS / API desligada):\n" + e);
   }
+}
 
   carregar();
 </script>

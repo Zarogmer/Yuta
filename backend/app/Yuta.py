@@ -604,9 +604,6 @@ def gerar_pdf_do_wb_aberto(wb, pasta_saida, nome_base, ignorar_abas=("nf",)):
 
 
 
-
-
-
 # ==============================
 # LICENÇA E DATA
 # ==============================
@@ -1775,9 +1772,9 @@ class FaturamentoDeAcordo:
     # =========================
     REGRAS_CLIENTES = {
         "Unimar Agenciamentos": {
-            "G26": 400,
+            "G26": 500,
             "C27": None,
-            "C35": 20,
+            "C35": 25,
         },
         "A/C Delta Agenciamento Marítimo Ltda.": {
             "G26": 500,
@@ -2632,8 +2629,6 @@ class FaturamentoSaoSebastiao:
         if not self.paginas_texto:
             raise RuntimeError("Nenhuma página com texto (nem pdfplumber nem OCR).")
 
-        
-        print("DEBUG fontes:", [(x["pdf"], x["page"], "OCR" if "OCR" in x.get("src","") else "TXT", len(x["texto"])) for x in self.paginas_texto])
 
         self.normalizar_texto_mantendo_linhas()
 
@@ -2743,146 +2738,135 @@ class FaturamentoSaoSebastiao:
     def extrair_periodo_por_data(self, pdf_alvo: str | None = None) -> tuple[str, str]:
         if pdf_alvo:
             alvo_norm = pdf_alvo.strip().lower()
-            textos = [
-                it["texto"] for it in self.paginas_texto
-                if str(it.get("pdf", "")).strip().lower() == alvo_norm
-            ]
-            texto_busca = "\n".join(textos).strip()
+            textos = [it["texto"] for it in self.paginas_texto
+                    if str(it.get("pdf","")).strip().lower() == alvo_norm]
+            texto_busca = "\n".join(textos)
         else:
-            texto_busca = (self.texto_pdf or "").strip()
+            texto_busca = self.texto_pdf or ""
 
-        if not texto_busca:
+        if not texto_busca.strip():
             raise RuntimeError("Período não encontrado no PDF (texto vazio).")
 
-        t = texto_busca.replace("\u00ad", "")
-        t = re.sub(r"[ \t]+", " ", t)
+        # tolerância OCR
+        rx_per = re.compile(r"per(?:[íi]|l|1|f|0)?odo", re.I)
+        rx_ini = re.compile(r"inic(?:ial|iaI|ia1|lal)?", re.I)
+        rx_fim = re.compile(r"fina(?:l|I|1)?", re.I)
+        rx_data = re.compile(r"\b(\d{1,2}/\d{1,2}/\d{4})\b")
 
-        per = r"Per(?:[íi]|l|1|f|0)?odo"
-        ini = r"Inic(?:ial|iaI|ia1|lal)"
-        fim = r"Fina(?:l|I|1)"
-        data = r"(\d{1,2}/\d{1,2}/\d{4})"
+        linhas = texto_busca.splitlines()
 
-        padrao = rf"{per}\s*{ini}.*?{data}.*?{per}\s*{fim}.*?{data}"
-        m = re.search(padrao, t, flags=re.IGNORECASE | re.DOTALL)
+        def achar_data(bloco_rx) -> str | None:
+            for i, ln in enumerate(linhas):
+                ln_norm = ln.replace("\u00ad", "")
+                if rx_per.search(ln_norm) and bloco_rx.search(ln_norm):
+                    # tenta na mesma linha
+                    m = rx_data.search(ln_norm)
+                    if m:
+                        return m.group(1)
+                    # tenta nas próximas 2 linhas (OCR às vezes joga a data abaixo)
+                    for j in range(i+1, min(i+3, len(linhas))):
+                        m2 = rx_data.search(linhas[j])
+                        if m2:
+                            return m2.group(1)
+            return None
 
-        if not m:
-            datas = re.findall(r"\d{1,2}/\d{1,2}/\d{4}", t)
-            if len(datas) >= 2:
-                return datas[0], datas[1]
-            raise RuntimeError("Período não encontrado no PDF")
+        data_ini = achar_data(rx_ini)
+        data_fim = achar_data(rx_fim)
 
-        return m.group(1), m.group(2)
+        if not data_ini or not data_fim:
+            raise RuntimeError(f"Período (datas) não encontrado. ini={data_ini} fim={data_fim}")
+
+        return data_ini, data_fim
+
 
     # ==================================================
     # EXTRAÇÃO - HORÁRIO (tolerante a OCR) por PDF (case-insensitive)
     # ==================================================
     def extrair_periodo_por_horario(self, pdf_alvo: str | None = None) -> tuple[str, str]:
-        """
-        Extrai horários do OGMO e normaliza para:
-        07x13, 13x19, 19x01, 01x07
-        Tolerante a OCR: Período / Periodo / Perfodo
-        """
         if pdf_alvo:
             alvo_norm = pdf_alvo.strip().lower()
-            textos = [
-                it["texto"] for it in self.paginas_texto
-                if str(it.get("pdf", "")).strip().lower() == alvo_norm
-            ]
-            texto_busca = "\n".join(textos).strip()
+            textos = [it["texto"] for it in self.paginas_texto
+                    if str(it.get("pdf","")).strip().lower() == alvo_norm]
+            texto_busca = "\n".join(textos)
         else:
-            texto_busca = (self.texto_pdf or "").strip()
+            texto_busca = self.texto_pdf or ""
 
-        if pdf_alvo and not texto_busca:
-            raise RuntimeError(
-                f"PDF {pdf_alvo} não tem texto extraível nas páginas lidas (provável imagem/scan)."
-            )
+        if not texto_busca.strip():
+            raise RuntimeError("Horários não encontrados (texto vazio).")
 
-        per = r"Per(?:[íi]|f)?odo"
-        padrao = (
-            rf"{per}\s*Inicial.*?(\d{{1,2}})\s*[x×h\-]\s*(\d{{1,2}}).*?"
-            rf"{per}\s*Final.*?(\d{{1,2}})\s*[x×h\-]\s*(\d{{1,2}})"
-        )
+        rx_per = re.compile(r"per(?:[íi]|l|1|f|0)?odo", re.I)
+        rx_ini = re.compile(r"inic(?:ial|iaI|ia1|lal)?", re.I)
+        rx_fim = re.compile(r"fina(?:l|I|1)?", re.I)
 
-        m = re.search(padrao, texto_busca, re.IGNORECASE | re.DOTALL)
-        if not m:
-            raise RuntimeError(
-                f"Horários (Período Inicial/Final) não encontrados no PDF {pdf_alvo}" if pdf_alvo
-                else "Horários (Período Inicial/Final) não encontrados no PDF"
-            )
+        # aceita 07x13, 07×13, 07-13, 07h13
+        rx_h = re.compile(r"\b(\d{1,2})\s*[x×h\-]\s*(\d{1,2})\b", re.I)
 
-        hi_ini, hf_ini, hi_fim, hf_fim = m.groups()
+        linhas = texto_busca.splitlines()
 
-        def normalizar(h1: str, h2: str) -> str:
-            a = int(h1) % 24
-            b = int(h2) % 24
-            return f"{a:02d}x{b:02d}"
+        def achar_horario(bloco_rx) -> str | None:
+            for i, ln in enumerate(linhas):
+                if rx_per.search(ln) and bloco_rx.search(ln):
+                    m = rx_h.search(ln)
+                    if m:
+                        a, b = int(m.group(1)) % 24, int(m.group(2)) % 24
+                        return f"{a:02d}x{b:02d}"
+                    for j in range(i+1, min(i+3, len(linhas))):
+                        m2 = rx_h.search(linhas[j])
+                        if m2:
+                            a, b = int(m2.group(1)) % 24, int(m2.group(2)) % 24
+                            return f"{a:02d}x{b:02d}"
+            return None
 
-        periodo_inicial = normalizar(hi_ini, hf_ini)
-        periodo_final = normalizar(hi_fim, hf_fim)
+        p_ini = achar_horario(rx_ini)
+        p_fim = achar_horario(rx_fim)
 
+        if not p_ini or not p_fim:
+            raise RuntimeError(f"Período (horários) não encontrado. ini={p_ini} fim={p_fim}")
+
+        # validação
         ordem = {"07x13", "13x19", "19x01", "01x07"}
-        if periodo_inicial not in ordem:
-            raise RuntimeError(f"Período inicial inválido após normalização: {periodo_inicial}")
-        if periodo_final not in ordem:
-            raise RuntimeError(f"Período final inválido após normalização: {periodo_final}")
+        if p_ini not in ordem or p_fim not in ordem:
+            raise RuntimeError(f"Horários inválidos: ini={p_ini} fim={p_fim}")
 
-        return periodo_inicial, periodo_final
-
+        return p_ini, p_fim
 
     # ==================================================
     # PERÍODO MESCLADO N PDFs (primeiro que tem INI, último que tem FIM)
     # ==================================================
-    def extrair_periodo_mesclado_n(self) -> tuple[str, str, str, str]:
-        """
-        Para OGMO 1..N (robusto):
-        - data_ini/periodo_ini: vem do PRIMEIRO PDF (na ordem) que conseguir extrair
-        - data_fim/periodo_fim: vem do ÚLTIMO PDF (na ordem) que conseguir extrair
 
-        Isso evita quebrar quando OGMO 1 ou o último estiverem escaneados (sem texto).
-        """
+
+    
+    def extrair_datas_mescladas(self) -> tuple[str, str]:
         pdfs = self._ordenar_pdfs_ogmo()
         if not pdfs:
             raise RuntimeError("Nenhum PDF selecionado.")
 
-        # 1) acha INÍCIO (primeiro que tem)
-        ini_pdf = None
-        data_ini = periodo_ini = None
+        # ✅ início = menor OGMO (normalmente 1)
+        p_ini = self._achar_pdf_menor_numero() or pdfs[0]
 
-        for p in pdfs:
-            try:
-                di, _ = self.extrair_periodo_por_data(p.name)
-                pi, _ = self.extrair_periodo_por_horario(p.name)
-                ini_pdf = p.name
-                data_ini = di
-                periodo_ini = pi
-                break
-            except Exception:
-                continue
+        # ✅ fim = maior OGMO (último: 2, 3, 4...)
+        p_fim = self._achar_pdf_maior_numero() or pdfs[-1]
 
-        # 2) acha FIM (último que tem)
-        fim_pdf = None
-        data_fim = periodo_fim = None
+        try:
+            di, _ = self.extrair_periodo_por_data(p_ini.name)
+        except Exception as e:
+            raise RuntimeError(
+                f"Não consegui extrair a DATA INICIAL do OGMO {self._numero_ogmo(p_ini.name)} ({p_ini.name}). Erro: {e}"
+            ) from e
 
-        for p in reversed(pdfs):
-            try:
-                _, df = self.extrair_periodo_por_data(p.name)
-                _, pf = self.extrair_periodo_por_horario(p.name)
-                fim_pdf = p.name
-                data_fim = df
-                periodo_fim = pf
-                break
-            except Exception:
-                continue
+        try:
+            _, df = self.extrair_periodo_por_data(p_fim.name)
+        except Exception as e:
+            raise RuntimeError(
+                f"Não consegui extrair a DATA FINAL do OGMO {self._numero_ogmo(p_fim.name)} ({p_fim.name}). Erro: {e}"
+            ) from e
 
-        if not ini_pdf:
-            raise RuntimeError("Não consegui extrair Período Inicial de nenhum PDF (todos sem texto/fora do padrão).")
-        if not fim_pdf:
-            raise RuntimeError("Não consegui extrair Período Final de nenhum PDF (todos sem texto/fora do padrão).")
+        print(f"✔ Data inicial de: {p_ini.name} -> {di}")
+        print(f"✔ Data final de:   {p_fim.name} -> {df}")
 
-        print(f"✔ Início extraído de: {ini_pdf} -> {data_ini} {periodo_ini}")
-        print(f"✔ Fim extraído de:    {fim_pdf} -> {data_fim} {periodo_fim}")
+        return di, df
 
-        return data_ini, data_fim, periodo_ini, periodo_fim
+
 
 
 
@@ -3217,336 +3201,47 @@ class FaturamentoSaoSebastiao:
         return total
 
 
-
-    # ==================================================
-    # FRONT VIGIA
-    # ==================================================
-    def preencher_front_vigia(self, wb):
-        try:
-            aba = next(s for s in wb.sheets if s.name.strip().lower() == "front vigia")
-
-            # ====== Você já tem essas funções no seu projeto ======
-            pasta = self.caminhos_pdfs[0].parent
-            navio = obter_nome_navio(pasta, None)
-            nd = obter_dn_da_pasta(pasta)
-            # ======================================================
-
-            ini, fim = self.extrair_periodo_por_data()
-
-            def fmt(data_str: str) -> str:
-                d = datetime.strptime(data_str, "%d/%m/%Y")
-                return f"{calendar.month_name[d.month]} {d.day}, {d.year}"
-
-            aba.range("D15").merge_area.value = navio
-            aba.range("D16").merge_area.value = fmt(ini)
-            aba.range("D17").merge_area.value = fmt(fim)
-
-            ano = datetime.now().year % 100
-            aba.range("C21").merge_area.value = f"DN {nd}/{ano:02d}"
-
-            hoje = datetime.now()
-            meses = ["", "janeiro", "fevereiro", "março", "abril", "maio", "junho",
-                     "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"]
-            aba.range("C39").merge_area.value = f"  Santos, {hoje.day} de {meses[hoje.month]} de {hoje.year}"
-
-            print("✅ FRONT VIGIA preenchido")
-
-        except StopIteration:
-            print("⚠️ Aba FRONT VIGIA não encontrada")
-
-    # ==================================================
-    # CREDIT NOTE
-    # ==================================================
-    def escrever_cn_credit_note(self, wb, nd: str):
-        ws_credit = None
-        for sheet in wb.sheets:
-            if sheet.name.strip().lower() == "credit note":
-                ws_credit = sheet
-                break
-
-        if ws_credit is None:
-            print("ℹ️ Aba Credit Note não existe — seguindo fluxo.")
-            return
-
-        ano = datetime.now().year % 100
-        ws_credit.range("C21").merge_area.value = f"CN {nd}/{ano:02d}"
-        print("✅ Credit Note preenchida (C21)")
-
-    # ==================================================
-    # REPORT VIGIA - PADRÃO (Aquarius e outros)
-    # ==================================================
-    def gerar_horarios(self, periodo_inicial: str, periodo_final: str) -> list[str]:
+    def _numero_ogmo(self, nome: str) -> int | None:
         """
-        Gera sequência entre início e fim, respeitando final diferente.
+        Extrai o número do OGMO do nome do arquivo.
+        Aceita:
+        - 'FOLHAS OGMO 1.pdf'
+        - 'FOLHAS OGMO (2).pdf'
+        - 'OGMO 3.pdf'
         """
-        seq = ["01x07", "07x13", "13x19", "19x01"]
-        if periodo_inicial not in seq or periodo_final not in seq:
-            # fallback: devolve só inicial se algo vier fora do padrão
-            return [periodo_inicial]
+        m = re.search(r"\bOGMO\s*\(?\s*(\d+)\s*\)?\b", nome, re.IGNORECASE)
+        if m:
+            return int(m.group(1))
 
-        horarios = []
-        idx = seq.index(periodo_inicial)
+        # fallback: tenta achar "(n)" no final
+        m = re.search(r"\(\s*(\d+)\s*\)", nome)
+        if m:
+            return int(m.group(1))
 
-        while True:
-            atual = seq[idx]
-            horarios.append(atual)
-            if atual == periodo_final:
-                break
-            idx = (idx + 1) % len(seq)
-
-        return horarios
-
-    def preencher_coluna_horarios(self, ws_report, horarios_ogmo: list[str], linha_inicial: int = 22):
-        for i, horario in enumerate(horarios_ogmo):
-            ws_report.range(f"E{linha_inicial + i}").value = horario
-
-
-    # ==================================================
-    # REPORT VIGIA - PADRÃO (Aquarius e outros)
-    # ==================================================
-    def colar_report_padrao(self, wb):
-        aba = self._achar_aba(wb, ["report vigia"])
-        print("📌 Report PADRÃO – Outros Clientes")
-
-        if len(self.caminhos_pdfs) >= 2:
-            data_ini, data_fim, periodo_inicial, periodo_final = self.extrair_periodo_mesclado_n()
-        else:
-            data_ini, data_fim = self.extrair_periodo_por_data()
-            periodo_inicial, periodo_final = self.extrair_periodo_por_horario()
-
-        periodos_com_data = self.gerar_periodos_report_padrao_ssz_por_dia(
-            data_ini=data_ini,
-            data_fim=data_fim,
-            periodo_inicial=periodo_inicial,
-            periodo_final=periodo_final,
-        )
-
-        linha_base = 22
-        n = len(periodos_com_data)
-
-        self._garantir_linhas_report(aba, linha_base, n)
-
-        for i, (d, p) in enumerate(periodos_com_data):
-            linha = linha_base + i
-            aba.range(f"C{linha}").value = self._fmt_data_excel(d)
-            aba.range(f"E{linha}").value = p
-
-        # ✅ status pelo nome do navio (o "nome" com (ATRACADO)/(AO LARGO))
-        pasta = self.caminhos_pdfs[0].parent
-        navio = obter_nome_navio(pasta, None)  # você já tem
-        status = self._status_atracacao(navio)
-
-        # ✅ preenche tarifa por linha usando C e E como base
-        self.preencher_tarifa_por_linha(aba, linha_base, n, status=status, coluna_saida="G")
-
-        print(f"✔ Colado {n} períodos + tarifa (status={status}) a partir de C{linha_base}/E{linha_base}")
-
-
-
-    def gerar_periodos_report_padrao_ssz_por_dia(self, data_ini, data_fim, periodo_inicial, periodo_final):
-        ordem = ["07x13", "13x19", "19x01", "01x07"]
-
-        def norm_periodo(p: str) -> str:
-            p = (p or "").strip().lower().replace(" ", "")
-            p = p.replace("h", "")
-            p = p.replace("-", "x").replace("×", "x")
-            p = p.replace(".", "")
-            try:
-                a, b = p.split("x")
-                return f"{int(a):02d}x{int(b):02d}"
-            except Exception:
-                return (p or "").upper()
-
-        def to_date(d):
-            if isinstance(d, datetime):
-                return d.date()
-            if isinstance(d, date):
-                return d
-            s = str(d).strip()
-            for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d"):
-                try:
-                    return datetime.strptime(s, fmt).date()
-                except Exception:
-                    pass
-            raise ValueError(f"Data inválida: {d!r}")
-
-        def seq_entre(inicio: str, fim: str) -> list[str]:
-            i = ordem.index(inicio)
-            out = []
-            while True:
-                out.append(ordem[i])
-                if ordem[i] == fim:
-                    break
-                i = (i + 1) % 4
-                if len(out) > 4:
-                    break
-            return out
-
-        p_ini = norm_periodo(periodo_inicial)
-        p_fim = norm_periodo(periodo_final)
-
-        if p_ini not in ordem:
-            raise ValueError(f"Período inicial inválido: {periodo_inicial!r} -> {p_ini!r}")
-        if p_fim not in ordem:
-            raise ValueError(f"Período final inválido: {periodo_final!r} -> {p_fim!r}")
-
-        d_ini = to_date(data_ini)
-        d_fim = to_date(data_fim)
-        if d_fim < d_ini:
-            raise ValueError(f"Data final menor que inicial: {d_ini} > {d_fim}")
-
-        out = []
-        dia = d_ini
-
-        while dia <= d_fim:
-            inicio = p_ini if dia == d_ini else "07x13"
-
-            if dia == d_fim:
-                fim = "01x07" if (d_ini == d_fim and p_ini == p_fim) else p_fim
-            else:
-                fim = "01x07"
-
-            for p in seq_entre(inicio, fim):
-                out.append((dia, p))  # ✅ 01x07 também fica no mesmo dia
-
-            dia += timedelta(days=1)
-
-            if len(out) > 400:
-                raise RuntimeError("Proteção: períodos demais gerados. Verifique datas/períodos extraídos.")
-
-        return out
-
-
-
-    def _fmt_data_excel(self, d):
-        if isinstance(d, datetime):
-            return d.date()
-        if isinstance(d, date):
-            return d
-        raise ValueError(f"Data inválida para Excel: {d!r}")
-
-
-
-
-    # --------------------------------------------------
-    # 1) status ATRACADO / AO LARGO pelo nome
-    # --------------------------------------------------
-    def _status_atracacao(self, nome: str) -> str | None:
-        """
-        Lê o texto do nome e tenta achar (ATRACADO) ou (AO LARGO).
-        Aceita variações: Atracado / AO-LARGO / A LARGO etc.
-        """
-        if not nome:
-            return None
-
-        s = str(nome).upper()
-
-        # pega o que estiver entre parênteses, se tiver
-        m = re.search(r"\((.*?)\)", s)
-        dentro = m.group(1).strip() if m else s
-
-        # normaliza
-        dentro = dentro.replace("-", " ").replace("_", " ")
-        dentro = re.sub(r"\s+", " ", dentro)
-
-        if "ATRAC" in dentro:
-            return "ATRACADO"
-        if "AO LARGO" in dentro or "A LARGO" in dentro or "LARGO" in dentro:
-            return "AO_LARGO"
         return None
 
 
-    # --------------------------------------------------
-    # 2) dia/noite pelo período OGMO (coluna E)
-    # --------------------------------------------------
-    def _is_noite_por_periodo(self, periodo: str) -> bool:
-        p = (periodo or "").strip().upper().replace(" ", "")
-        # noite: 19x01 e 01x07
-        return p in ("19X01", "01X07", "19x01", "01x07")
+
+    def _achar_pdf_menor_numero(self) -> Path | None:
+        candidatos = []
+        for p in self.caminhos_pdfs:
+            n = self._numero_ogmo(p.name)
+            if n is not None:
+                candidatos.append((n, p))
+        if not candidatos:
+            return None
+        return min(candidatos, key=lambda x: x[0])[1]
 
 
-    # --------------------------------------------------
-    # 3) domingo/feriado (mínimo viável)
-    #    (se você já tiver função de feriado no projeto, plugue aqui)
-    # --------------------------------------------------
-    def _is_domingo_ou_feriado(self, d: date) -> bool:
-        if isinstance(d, datetime):
-            d = d.date()
-        # domingo
-        if d.weekday() == 6:
-            return True
-
-        # ✅ feriados nacionais fixos (mínimo)
-        fixos = {
-            (1, 1),    # Confraternização Universal
-            (4, 21),   # Tiradentes
-            (5, 1),    # Dia do Trabalho
-            (9, 7),    # Independência
-            (10, 12),  # Nossa Sra Aparecida
-            (11, 2),   # Finados
-            (11, 15),  # Proclamação da República
-            (12, 25),  # Natal
-        }
-        if (d.month, d.day) in fixos:
-            return True
-
-        # Se você quiser incluir feriados móveis (Carnaval/Paixão/Corpus Christi),
-        # eu adiciono um cálculo de Páscoa e derivados aqui.
-        return False
-
-
-    # --------------------------------------------------
-    # 4) pega a tarifa ATRACADO pela regra:
-    #    - Seg-Sáb dia:   N9
-    #    - Seg-Sáb noite: O9
-    #    - Dom/Feriado dia:   P9
-    #    - Dom/Feriado noite: Q9
-    # --------------------------------------------------
-    def _tarifa_atracado(self, ws_report, d: date, periodo: str) -> float:
-        dom_fer = self._is_domingo_ou_feriado(d)
-        noite = self._is_noite_por_periodo(periodo)
-
-        if not dom_fer and not noite:
-            cell = "N9"  # seg-sab dia
-        elif not dom_fer and noite:
-            cell = "O9"  # seg-sab noite
-        elif dom_fer and not noite:
-            cell = "P9"  # dom/fer dia
-        else:
-            cell = "Q9"  # dom/fer noite
-
-        val = ws_report.range(cell).value
-        return float(val or 0.0)
-
-
-    # --------------------------------------------------
-    # 5) aplica tarifa linha a linha (baseado em C=data e E=periodo)
-    # --------------------------------------------------
-    def preencher_tarifa_por_linha(self, ws_report, linha_base: int, n: int, status: str, coluna_saida: str = "G"):
-        """
-        Lê data em C{linha} e período em E{linha}.
-        Se status == ATRACADO: escreve tarifa na coluna_saida.
-        """
-        if status != "ATRACADO":
-            # por enquanto só tratamos ATRACADO (você não passou tabela do AO LARGO)
-            return
-
-        for i in range(n):
-            linha = linha_base + i
-            d = ws_report.range(f"C{linha}").value
-            p = ws_report.range(f"E{linha}").value
-
-            # normaliza data vindo do Excel (pode vir datetime)
-            if isinstance(d, datetime):
-                d = d.date()
-            if not isinstance(d, date):
-                continue
-
-            tarifa = self._tarifa_atracado(ws_report, d, str(p or ""))
-            ws_report.range(f"{coluna_saida}{linha}").value = tarifa
-
-
-
+    def _achar_pdf_maior_numero(self) -> Path | None:
+        candidatos = []
+        for p in self.caminhos_pdfs:
+            n = self._numero_ogmo(p.name)
+            if n is not None:
+                candidatos.append((n, p))
+        if not candidatos:
+            return None
+        return max(candidatos, key=lambda x: x[0])[1]
 
 
 
@@ -3655,6 +3350,407 @@ class FaturamentoSaoSebastiao:
         return nomes[0], nomes[-1]
 
 
+
+    # ==================================================
+    # FRONT VIGIA
+    # ==================================================
+    def preencher_front_vigia(self, wb):
+        try:
+            aba = next(s for s in wb.sheets if s.name.strip().lower() == "front vigia")
+
+            pasta = self.caminhos_pdfs[0].parent
+            navio = obter_nome_navio(pasta, None)
+            nd = obter_dn_da_pasta(pasta)
+            
+            # ✅ aqui é o pulo do gato
+            if len(self.caminhos_pdfs) >= 2:
+                data_ini, data_fim = self.extrair_datas_mescladas()
+            else:
+                data_ini, data_fim = self.extrair_periodo_por_data()
+
+
+            def fmt(data_str: str) -> str:
+                d = datetime.strptime(data_str, "%d/%m/%Y")
+                return f"{calendar.month_name[d.month]} {d.day}, {d.year}"
+
+            aba.range("D15").merge_area.value = navio
+            aba.range("D16").merge_area.value = fmt(data_ini)
+            aba.range("D17").merge_area.value = fmt(data_fim)
+
+            ano = datetime.now().year % 100
+            aba.range("C21").merge_area.value = f"DN {nd}/{ano:02d}"
+
+            hoje = datetime.now()
+            meses = ["", "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+                    "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"]
+            aba.range("C39").merge_area.value = f"  Santos, {hoje.day} de {meses[hoje.month]} de {hoje.year}"
+
+            print("✅ FRONT VIGIA preenchido")
+
+        except StopIteration:
+            print("⚠️ Aba FRONT VIGIA não encontrada")
+
+    # ==================================================
+    # CREDIT NOTE
+    # ==================================================
+    def escrever_cn_credit_note(self, wb, nd: str):
+        ws_credit = None
+        for sheet in wb.sheets:
+            if sheet.name.strip().lower() == "credit note":
+                ws_credit = sheet
+                break
+
+        if ws_credit is None:
+            print("ℹ️ Aba Credit Note não existe — seguindo fluxo.")
+            return
+
+        ano = datetime.now().year % 100
+        ws_credit.range("C21").merge_area.value = f"CN {nd}/{ano:02d}"
+        print("✅ Credit Note preenchida (C21)")
+
+    # ==================================================
+    # REPORT VIGIA - PADRÃO (Aquarius e outros)
+    # ==================================================
+
+    def _tarifa_por_status(self, ws_report, d: date, periodo: str, status: str) -> float:
+        dom_fer = self._is_domingo_ou_feriado(d)
+        noite = self._is_noite_por_periodo(periodo)
+
+        # ✅ ATRACADO usa linha 9, FUNDEIO usa linha 16
+        linha_ref = {
+            "ATRACADO": 9,
+            "FUNDEIO": 16,
+        }.get(status)
+
+        if linha_ref is None:
+            return 0.0  # AO_LARGO ou desconhecido -> por enquanto não calcula
+
+        # escolhe coluna base
+        if not dom_fer and not noite:
+            col = "N"
+        elif not dom_fer and noite:
+            col = "O"
+        elif dom_fer and not noite:
+            col = "P"
+        else:
+            col = "Q"
+
+        cell = f"{col}{linha_ref}"
+        val = ws_report.range(cell).value
+        return float(val or 0.0)
+
+
+
+    def preencher_tarifa_por_linha(self, ws_report, linha_base: int, n: int, status: str, coluna_saida: str = "G"):
+        """
+        Lê data em C{linha} e período em E{linha}.
+        Se status == ATRACADO ou FUNDEIO: escreve tarifa na coluna_saida.
+        """
+        if status not in ("ATRACADO", "FUNDEIO"):
+            return
+
+        for i in range(n):
+            linha = linha_base + i
+            d = ws_report.range(f"C{linha}").value
+            p = ws_report.range(f"E{linha}").value
+
+            if isinstance(d, datetime):
+                d = d.date()
+            if not isinstance(d, date):
+                continue
+
+            tarifa = self._tarifa_por_status(ws_report, d, str(p or ""), status=status)
+            ws_report.range(f"{coluna_saida}{linha}").value = tarifa
+
+
+    def gerar_horarios(self, periodo_inicial: str, periodo_final: str) -> list[str]:
+        """
+        Gera sequência entre início e fim, respeitando final diferente.
+        """
+        seq = ["01x07", "07x13", "13x19", "19x01"]
+        if periodo_inicial not in seq or periodo_final not in seq:
+            # fallback: devolve só inicial se algo vier fora do padrão
+            return [periodo_inicial]
+
+        horarios = []
+        idx = seq.index(periodo_inicial)
+
+        while True:
+            atual = seq[idx]
+            horarios.append(atual)
+            if atual == periodo_final:
+                break
+            idx = (idx + 1) % len(seq)
+
+        return horarios
+
+    def preencher_coluna_horarios(self, ws_report, horarios_ogmo: list[str], linha_inicial: int = 22):
+        for i, horario in enumerate(horarios_ogmo):
+            ws_report.range(f"E{linha_inicial + i}").value = horario
+
+
+    # ==================================================
+    # REPORT VIGIA - PADRÃO (Aquarius e outros)
+    # ==================================================
+    def colar_report_padrao(self, wb):
+        aba = self._achar_aba(wb, ["report vigia"])
+        print("📌 Report PADRÃO – Outros Clientes")
+
+        if len(self.caminhos_pdfs) >= 2:
+            data_ini, data_fim, periodo_inicial, periodo_final = self.extrair_periodo_mesclado_n()
+        else:
+            data_ini, data_fim = self.extrair_periodo_por_data()
+            periodo_inicial, periodo_final = self.extrair_periodo_por_horario()
+
+
+        print("DEBUG extração:",
+                "data_ini=", data_ini,
+                "data_fim=", data_fim,
+                "p_ini=", periodo_inicial,
+                "p_fim=", periodo_final)
+
+
+
+
+        periodos_com_data = self.gerar_periodos_report_padrao_ssz_por_dia(
+            data_ini=data_ini,
+            data_fim=data_fim,
+            periodo_inicial=periodo_inicial,
+            periodo_final=periodo_final,
+        )
+
+        linha_base = 22
+        n = len(periodos_com_data)
+
+        self._garantir_linhas_report(aba, linha_base, n)
+
+        for i, (d, p) in enumerate(periodos_com_data):
+            linha = linha_base + i
+            aba.range(f"C{linha}").value = self._fmt_data_excel(d)
+            aba.range(f"E{linha}").value = p
+
+        # ✅ status pelo nome do navio (o "nome" com (ATRACADO)/(AO LARGO))
+        pasta = self.caminhos_pdfs[0].parent
+        navio = obter_nome_navio(pasta, None)  # você já tem
+        status = self._status_atracacao(navio)
+
+        # ✅ preenche tarifa por linha usando C e E como base
+        self.preencher_tarifa_por_linha(aba, linha_base, n, status=status, coluna_saida="G")
+
+        print(f"✔ Colado {n} períodos + tarifa (status={status}) a partir de C{linha_base}/E{linha_base}")
+
+
+
+    def gerar_periodos_report_padrao_ssz_por_dia(self, data_ini, data_fim, periodo_inicial, periodo_final):
+        ordem = ["07x13", "13x19", "19x01", "01x07"]
+
+        def norm_periodo(p: str) -> str:
+            p = (p or "").strip().lower().replace(" ", "")
+            p = p.replace("h", "")
+            p = p.replace("-", "x").replace("×", "x")
+            p = p.replace(".", "")
+            try:
+                a, b = p.split("x")
+                return f"{int(a):02d}x{int(b):02d}"
+            except Exception:
+                return (p or "").upper()
+
+        def to_date(d):
+            if isinstance(d, datetime):
+                return d.date()
+            if isinstance(d, date):
+                return d
+            s = str(d).strip()
+            for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d"):
+                try:
+                    return datetime.strptime(s, fmt).date()
+                except Exception:
+                    pass
+            raise ValueError(f"Data inválida: {d!r}")
+
+        def seq_entre(inicio: str, fim: str) -> list[str]:
+            i = ordem.index(inicio)
+            out = []
+            while True:
+                out.append(ordem[i])
+                if ordem[i] == fim:
+                    break
+                i = (i + 1) % 4
+                if len(out) > 4:
+                    break
+            return out
+
+        p_ini = norm_periodo(periodo_inicial)
+        p_fim = norm_periodo(periodo_final)
+
+        if p_ini not in ordem:
+            raise ValueError(f"Período inicial inválido: {periodo_inicial!r} -> {p_ini!r}")
+        if p_fim not in ordem:
+            raise ValueError(f"Período final inválido: {periodo_final!r} -> {p_fim!r}")
+
+        d_ini = to_date(data_ini)
+        d_fim = to_date(data_fim)
+        if d_fim < d_ini:
+            raise ValueError(f"Data final menor que inicial: {d_ini} > {d_fim}")
+
+        out = []
+        dia = d_ini
+
+        while dia <= d_fim:
+            # Mantém sua regra: em dias “do meio”, começa sempre em 07x13
+            inicio = p_ini if dia == d_ini else "07x13"
+
+            # No último dia, termina no período final; caso contrário, vai até 01x07
+            fim = p_fim if dia == d_fim else "01x07"
+
+            for p in seq_entre(inicio, fim):
+                out.append((dia, p))  # mantém 01x07 no mesmo dia (como você já faz)
+
+            dia += timedelta(days=1)
+
+            if len(out) > 400:
+                raise RuntimeError("Proteção: períodos demais gerados. Verifique datas/períodos extraídos.")
+
+        return out
+
+        
+
+
+    def _fmt_data_excel(self, d):
+        if isinstance(d, datetime):
+            return d.date()
+        if isinstance(d, date):
+            return d
+        raise ValueError(f"Data inválida para Excel: {d!r}")
+
+
+
+
+    # --------------------------------------------------
+    # 1) status ATRACADO / AO LARGO pelo nome
+    # --------------------------------------------------
+    def _status_atracacao(self, nome: str) -> str | None:
+        if not nome:
+            return None
+
+        s = str(nome).upper()
+
+        # se tiver parênteses, pega dentro; se não, usa tudo
+        m = re.search(r"\((.*?)\)", s)
+        dentro = m.group(1).strip() if m else s
+
+        dentro = dentro.replace("-", " ").replace("_", " ")
+        dentro = re.sub(r"\s+", " ", dentro)
+
+        if "ATRAC" in dentro:
+            return "ATRACADO"
+        if "FUNDE" in dentro:   # ✅ FUNDEIO
+            return "FUNDEIO"
+        if "AO LARGO" in dentro or "A LARGO" in dentro or "LARGO" in dentro:
+            return "AO_LARGO"
+
+        return None
+
+    # --------------------------------------------------
+    # 2) dia/noite pelo período OGMO (coluna E)
+    # --------------------------------------------------
+    def _is_noite_por_periodo(self, periodo: str) -> bool:
+        p = (periodo or "").strip().upper().replace(" ", "")
+        # noite: 19x01 e 01x07
+        return p in ("19X01", "01X07", "19x01", "01x07")
+
+
+    # --------------------------------------------------
+    # 3) domingo/feriado (mínimo viável)
+    #    (se você já tiver função de feriado no projeto, plugue aqui)
+    # --------------------------------------------------
+    def _is_domingo_ou_feriado(self, d: date) -> bool:
+        if isinstance(d, datetime):
+            d = d.date()
+        # domingo
+        if d.weekday() == 6:
+            return True
+
+        # ✅ feriados nacionais fixos (mínimo)
+        fixos = {
+            (1, 1),    # Confraternização Universal
+            (4, 21),   # Tiradentes
+            (5, 1),    # Dia do Trabalho
+            (9, 7),    # Independência
+            (10, 12),  # Nossa Sra Aparecida
+            (11, 2),   # Finados
+            (11, 15),  # Proclamação da República
+            (12, 25),  # Natal
+        }
+        if (d.month, d.day) in fixos:
+            return True
+
+        # Se você quiser incluir feriados móveis (Carnaval/Paixão/Corpus Christi),
+        # eu adiciono um cálculo de Páscoa e derivados aqui.
+        return False
+
+
+    # --------------------------------------------------
+    # 4) pega a tarifa ATRACADO pela regra:
+    #    - Seg-Sáb dia:   N9
+    #    - Seg-Sáb noite: O9
+    #    - Dom/Feriado dia:   P9
+    #    - Dom/Feriado noite: Q9
+    # --------------------------------------------------
+    def _tarifa_atracado(self, ws_report, d: date, periodo: str) -> float:
+        dom_fer = self._is_domingo_ou_feriado(d)
+        noite = self._is_noite_por_periodo(periodo)
+
+        if not dom_fer and not noite:
+            cell = "N9"  # seg-sab dia
+        elif not dom_fer and noite:
+            cell = "O9"  # seg-sab noite
+        elif dom_fer and not noite:
+            cell = "P9"  # dom/fer dia
+        else:
+            cell = "Q9"  # dom/fer noite
+
+        val = ws_report.range(cell).value
+        return float(val or 0.0)
+
+
+    # --------------------------------------------------
+    # 5) aplica tarifa linha a linha (baseado em C=data e E=periodo)
+    # --------------------------------------------------
+    def preencher_tarifa_por_linha(self, ws_report, linha_base: int, n: int, status: str, coluna_saida: str = "G"):
+        if status not in ("ATRACADO", "FUNDEIO"):
+            return
+
+        # ATRACADO usa linha 9, FUNDEIO usa linha 16
+        linha_ref = 9 if status == "ATRACADO" else 16
+
+        for i in range(n):
+            linha = linha_base + i
+            d = ws_report.range(f"C{linha}").value
+            p = ws_report.range(f"E{linha}").value
+
+            if isinstance(d, datetime):
+                d = d.date()
+            if not isinstance(d, date):
+                continue
+
+            dom_fer = self._is_domingo_ou_feriado(d)
+            noite = self._is_noite_por_periodo(str(p or ""))
+
+            if not dom_fer and not noite:
+                cell = f"N{linha_ref}"
+            elif not dom_fer and noite:
+                cell = f"O{linha_ref}"
+            elif dom_fer and not noite:
+                cell = f"P{linha_ref}"
+            else:
+                cell = f"Q{linha_ref}"
+
+            val = ws_report.range(cell).value
+            ws_report.range(f"{coluna_saida}{linha}").value = float(val or 0.0)
+
+
+        print("DEBUG status:", status)
 
     # ==================================================
     # EXECUÇÃO PRINCIPAL
