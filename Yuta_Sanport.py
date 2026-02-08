@@ -1,3 +1,4 @@
+
 # ==============================
 # IMPORTS
 # ==============================
@@ -1397,11 +1398,9 @@ class FaturamentoCompleto:
             # ==========================
             # 📂 PASTA DO MODELO (BASE)
             # ==========================
-            pasta_modelo = (
-                Path(r"C:\Users\Guilherme\SANPORT LOGÍSTICA PORTUÁRIA LTDA")
-                / "Central de Documentos - 01. FATURAMENTOS"
-                / "CARGONAVE"
-            )
+            # ✅ PASTA DO MODELO (dinâmica - funciona no cliente)
+            pasta_modelo = self.encontrar_pasta_modelo("CARGONAVE")
+
 
             if not pasta_modelo.exists():
                 raise FileNotFoundError(f"Pasta modelo não encontrada: {pasta_modelo}")
@@ -1515,6 +1514,33 @@ class FaturamentoCompleto:
 
 
 
+    from pathlib import Path
+
+    def encontrar_pasta_modelo(self, nome_cliente: str) -> Path:
+        """
+        Encontra ...\01. FATURAMENTOS\<nome_cliente> usando como base
+        as pastas que já funcionam no PC atual.
+        """
+        bases = []
+        if getattr(self, "pasta_saida_final", None):
+            bases.append(Path(self.pasta_saida_final))
+        if getattr(self, "pasta_faturamentos", None):
+            bases.append(Path(self.pasta_faturamentos))
+
+        for base in bases:
+            for p in [base] + list(base.parents):
+                if p.name.strip().upper() == "01. FATURAMENTOS":
+                    pasta = p / nome_cliente
+                    if pasta.exists():
+                        return pasta
+
+        raise FileNotFoundError(
+            f"Não encontrei a pasta de modelos em ...\\01. FATURAMENTOS\\{nome_cliente} "
+            f"(base testada: {[str(b) for b in bases]})"
+        )
+
+
+
     def gerar_planilha_calculo_conesul(self):
         try:
             # ==========================
@@ -1537,11 +1563,8 @@ class FaturamentoCompleto:
             # ==========================
             # 📂 PASTA DO MODELO (BASE)
             # ==========================
-            pasta_modelo = (
-                Path(r"C:\Users\Guilherme\SANPORT LOGÍSTICA PORTUÁRIA LTDA")
-                / "Central de Documentos - 01. FATURAMENTOS"
-                / "CONESUL"
-            )
+            pasta_modelo = self.encontrar_pasta_modelo("CONESUL")
+
 
             if not pasta_modelo.exists():
                 raise FileNotFoundError(f"Pasta modelo não encontrada: {pasta_modelo}")
@@ -1556,7 +1579,7 @@ class FaturamentoCompleto:
             # 🔎 LOCALIZAR MODELO EXCEL
             # ==========================
             modelo = None
-
+ 
             for arq in pasta_modelo.glob("*.xlsx"):
                 nome_limpo = remover_acentos(arq.name.lower())
                 if "calculo" in nome_limpo:
