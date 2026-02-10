@@ -226,10 +226,11 @@ def obter_nome_navio_da_pasta(pasta_navio: Path) -> str:
 #===================SISTEMA=========================================#
 
 
-def abrir_workbooks(pasta_faturamentos: Path):
-    caminho_navio_rede = selecionar_arquivo_navio()
+def abrir_workbooks(pasta_faturamentos: Path, caminho_navio_rede: Path | str | None = None):
     if not caminho_navio_rede:
-        raise FileNotFoundError("Arquivo do NAVIO não selecionado")
+        caminho_navio_rede = selecionar_arquivo_navio()
+        if not caminho_navio_rede:
+            raise FileNotFoundError("Arquivo do NAVIO não selecionado")
 
     caminho_navio_rede = Path(caminho_navio_rede)
     pasta_navio = caminho_navio_rede.parent
@@ -263,8 +264,8 @@ def abrir_workbooks(pasta_faturamentos: Path):
         else:
             raise RuntimeError("Aba FRONT não encontrada")
 
-        # ✅ RETURN PADRONIZADO (5 valores)
-        return app, wb1, wb2, ws1, ws_front, pasta_navio
+        # ✅ RETURN PADRONIZADO
+        return app, wb1, wb2, ws1, ws_front, pasta_navio, caminho_navio_rede
 
 
     except Exception:

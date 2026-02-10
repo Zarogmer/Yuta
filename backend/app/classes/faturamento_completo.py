@@ -17,12 +17,16 @@ class FaturamentoCompleto:
 
 
 
-    def executar(self):
+    def executar(self, preview=False, selection=None):
         print("🚀 Iniciando execução...")
 
         # 🔹 1️⃣ Buscar pasta FATURAMENTOS apenas 1x
         self.pasta_faturamentos = obter_pasta_faturamentos()
-        resultado = abrir_workbooks(self.pasta_faturamentos)
+        caminho_navio_rede = None
+        if selection and isinstance(selection, dict):
+            caminho_navio_rede = selection.get("navio_path")
+
+        resultado = abrir_workbooks(self.pasta_faturamentos, caminho_navio_rede)
 
         if not resultado:
             raise SystemExit("❌ Erro ou pasta inválida")
@@ -34,6 +38,7 @@ class FaturamentoCompleto:
             self.ws1,
             self.ws_front,
             pasta_navio_rede,
+            caminho_navio_rede,
         ) = resultado
 
         self.pasta_saida_final = pasta_navio_rede
@@ -53,6 +58,16 @@ class FaturamentoCompleto:
         nome_base = f"FATURAMENTO - DN {self.dn} - MV {self.nome_navio}"
 
         try:
+            if preview:
+                total_periodos = self.processar_preview()
+                preview_pdf = self._export_preview_pdf(nome_base)
+                fechar_workbooks(self.app, self.wb1, self.wb2)
+                return {
+                    "text": "",
+                    "preview_pdf": str(preview_pdf) if preview_pdf else None,
+                    "selection": {"navio_path": str(caminho_navio_rede)},
+                }
+
             self.processar()
 
             caminho_excel = pasta_navio_rede / f"{nome_base}.xlsx"
@@ -88,6 +103,122 @@ class FaturamentoCompleto:
             print(f"❌ ERRO NO FATURAMENTO: {e}")
             fechar_workbooks(self.app, self.wb1, self.wb2)
             raise
+
+    def _preview_title(self):
+        return "Faturamento (Normal)"
+
+    def _format_date(self, value):
+        if isinstance(value, datetime):
+            return value.strftime("%d/%m/%Y")
+        if isinstance(value, date):
+            return value.strftime("%d/%m/%Y")
+        return str(value) if value is not None else ""
+
+    def _format_brl(self, value):
+        if value in (None, ""):
+            return "R$ 0,00"
+        try:
+            num = float(value)
+        except Exception:
+            return str(value)
+
+        texto = f"{num:,.2f}"
+        texto = texto.replace(",", "X").replace(".", ",").replace("X", ".")
+        return f"R$ {texto}"
+
+    def _build_preview_text(self, total_periodos, nome_base):
+        ws_report = self.wb2.sheets["REPORT VIGIA"]
+        linhas = []
+        linhas.append("PRE-VISUALIZACAO")
+        linhas.append(f"Processo: {self._preview_title()}")
+        linhas.append(f"Nome base: {nome_base}")
+        linhas.append(f"DN: {self.dn}")
+        linhas.append(f"Navio: {self.nome_navio}")
+        linhas.append(f"Periodos: {total_periodos}")
+        linhas.append("")
+        linhas.append("DATA | PERIODO | VALOR")
+
+        limite = min(total_periodos, 15)
+        for i in range(limite):
+            linha = 22 + i
+            data = self._format_date(ws_report.range(f"C{linha}").value)
+            periodo = ws_report.range(f"E{linha}").value or ""
+            valor = self._format_brl(ws_report.range(f"G{linha}").value)
+            linhas.append(f"{data} | {periodo} | {valor}")
+
+        if total_periodos > limite:
+            linhas.append(f"... {total_periodos - limite} linhas omitidas")
+
+        return "\n".join(linhas)
+
+    def _export_preview_pdf(self, nome_base):
+        caminho_pdf = Path(gettempdir()) / f"preview_{nome_base}.pdf"
+        if caminho_pdf.exists():
+            caminho_pdf.unlink()
+
+        aba_nf = None
+        for ws in self.wb2.sheets:
+            if ws.name.strip().upper() == "NF":
+                aba_nf = ws
+                ws.api.Visible = False
+                break
+
+        try:
+            self.wb2.api.ExportAsFixedFormat(
+                Type=0,
+                Filename=str(caminho_pdf),
+                Quality=0,
+                IncludeDocProperties=True,
+                IgnorePrintAreas=True,
+                OpenAfterPublish=False,
+            )
+        finally:
+            if aba_nf:
+                aba_nf.api.Visible = True
+
+        return caminho_pdf
+
+    def processar_preview(self):
+        # Front e report, sem gerar arquivos externos
+        self.preencher_front_vigia()
+
+        if "REPORT VIGIA" not in [s.name for s in self.wb2.sheets]:
+            raise RuntimeError("Aba 'REPORT VIGIA' não encontrada")
+
+        ws_report = self.wb2.sheets["REPORT VIGIA"]
+
+        self.processar_MMO(self.wb1, self.wb2)
+
+        qtd_periodos = self.obter_periodos(self.ws1)
+
+        self.inserir_linhas_report(
+            ws_report,
+            linha_inicial=22,
+            periodos=qtd_periodos
+        )
+
+        periodos = self.preencher_coluna_E(
+            ws_report,
+            linha_inicial=22,
+            debug=True
+        ) or []
+
+        self.preencher_coluna_G(
+            ws_report,
+            self.ws1,
+            linha_inicial=22,
+            periodos=periodos,
+            debug=False
+        )
+
+        self.montar_datas_report_vigia(
+            ws_report,
+            self.ws1,
+            linha_inicial=22,
+            periodos=len(periodos)
+        )
+
+        return len(periodos)
 
 
     def processar(self):
@@ -300,24 +431,52 @@ class FaturamentoCompleto:
         if primeira_linha_data is None:
             return []  # nenhuma data antiga encontrada
 
-        # 2️⃣ Contar espaços vazios ou "Total" antes da próxima data
-        contador_vazio = 0
-        for i in range(primeira_linha_data + 1, last_row + 1):
-            valor = ws_resumo.range(f"B{i}").value
-            if valor in (None, "", "Total"):
-                contador_vazio += 1
-            else:
+        # 2️⃣ Buscar periodos da primeira data (coluna C)
+        data_ref = ws_resumo.range(f"B{primeira_linha_data}").value
+        periodos_encontrados = []
+
+        for i in range(primeira_linha_data, last_row + 1):
+            valor_b = ws_resumo.range(f"B{i}").value
+            valor_c = ws_resumo.range(f"C{i}").value
+
+            if i != primeira_linha_data:
+                if valor_b not in (None, "", "Total") and valor_b != data_ref:
+                    break
+
+            if isinstance(valor_c, str) and valor_c.strip().lower().startswith("total"):
                 break
 
-        # 3️⃣ Definir primeiro período
-        if contador_vazio >= 4:
-            primeiro_periodo = "06x12"
-        elif contador_vazio == 3:
-            primeiro_periodo = "12x18"
-        elif contador_vazio == 2:
-            primeiro_periodo = "18x24"
+            periodo = self.normalizar_periodo(valor_c)
+            if periodo:
+                periodos_encontrados.append(periodo)
+
+        if periodos_encontrados:
+            # Escolhe o primeiro periodo pela ordem padrao (ignora a ordem da planilha)
+            primeiro_periodo = min(
+                periodos_encontrados,
+                key=lambda p: sequencia_padrao.index(p),
+            )
         else:
-            primeiro_periodo = "00x06"
+            primeiro_periodo = None
+
+        # 3️⃣ Se nao for possivel, cai na heuristica de espacamento
+        if not primeiro_periodo:
+            contador_vazio = 0
+            for i in range(primeira_linha_data + 1, last_row + 1):
+                valor = ws_resumo.range(f"B{i}").value
+                if valor in (None, "", "Total"):
+                    contador_vazio += 1
+                else:
+                    break
+
+            if contador_vazio >= 4:
+                primeiro_periodo = "06x12"
+            elif contador_vazio == 3:
+                primeiro_periodo = "12x18"
+            elif contador_vazio == 2:
+                primeiro_periodo = "18x24"
+            else:
+                primeiro_periodo = "00x06"
 
         # 4️⃣ Sequência cíclica
         idx_inicio = sequencia_padrao.index(primeiro_periodo)
@@ -339,9 +498,7 @@ class FaturamentoCompleto:
             ciclos = self.gerar_ciclos_coluna_E(self.ws1)
             for idx, p in enumerate(ciclos):
                 ws_report.range(f"E{linha_inicial + idx}").value = p
-            if debug:
-
-                return ciclos
+            return ciclos
         except Exception as e:
             print(f"❌ Erro ao preencher coluna E: {e}")
             raise
@@ -381,10 +538,7 @@ class FaturamentoCompleto:
 
             valores_g.append(valor)
 
-        if debug:
-
-
-         return valores_g
+        return valores_g
 
 
     def preencher_coluna_G(self, ws_report, ws_resumo, linha_inicial=22, periodos=None, debug=False):
@@ -888,7 +1042,8 @@ class FaturamentoCompleto:
 
         for base in bases:
             for p in [base] + list(base.parents):
-                if p.name.strip().upper() == "01. FATURAMENTOS":
+                nome_pasta = p.name.strip().upper()
+                if "01. FATURAMENTOS" in nome_pasta:
                     pasta = p / nome_cliente
                     if pasta.exists():
                         return pasta

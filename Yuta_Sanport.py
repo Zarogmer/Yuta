@@ -1529,7 +1529,8 @@ class FaturamentoCompleto:
 
         for base in bases:
             for p in [base] + list(base.parents):
-                if p.name.strip().upper() == "01. FATURAMENTOS":
+                nome_pasta = p.name.strip().upper()
+                if "01. FATURAMENTOS" in nome_pasta:
                     pasta = p / nome_cliente
                     if pasta.exists():
                         return pasta

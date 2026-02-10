@@ -75,11 +75,14 @@ class FaturamentoDeAcordo:
 
 
 
-    def executar(self):
+    def executar(self, preview=False, selection=None):
         print("🚀 Iniciando execução (DE ACORDO)...")
 
         pasta_faturamentos = obter_pasta_faturamentos()
-        pasta_navio = selecionar_pasta_navio()
+        if selection and isinstance(selection, dict) and selection.get("pasta_navio"):
+            pasta_navio = Path(selection["pasta_navio"])
+        else:
+            pasta_navio = selecionar_pasta_navio()
 
         dn = obter_dn_da_pasta(pasta_navio)
         nome_navio = obter_nome_navio(pasta_navio)
@@ -118,6 +121,14 @@ class FaturamentoDeAcordo:
 
             print("✅ Faturamento De Acordo concluído!")
 
+            if preview:
+                preview_pdf = self._export_preview_pdf(ws_front, nome_base)
+                return {
+                    "text": "",
+                    "preview_pdf": str(preview_pdf) if preview_pdf else None,
+                    "selection": {"pasta_navio": str(pasta_navio)},
+                }
+
             # ✅ SALVAR EXCEL (ainda dentro do try, com wb aberto)
             caminho_excel = salvar_excel_com_nome(
                 wb=wb,
@@ -137,3 +148,22 @@ class FaturamentoDeAcordo:
 
         finally:
             fechar_workbooks(app=app, wb_cliente=wb)
+
+    def _build_preview_text(self, nome_base, dn, nome_navio, data_extenso):
+        linhas = [
+            "PRE-VISUALIZACAO",
+            "Processo: De Acordo",
+            f"Nome base: {nome_base}",
+            f"DN: {dn}",
+            f"Navio: {nome_navio}",
+            f"Data: {data_extenso}",
+        ]
+        return "\n".join(linhas)
+
+    def _export_preview_pdf(self, ws_front, nome_base):
+        caminho_pdf = Path(gettempdir()) / f"preview_{nome_base}.pdf"
+        if caminho_pdf.exists():
+            caminho_pdf.unlink()
+
+        ws_front.api.ExportAsFixedFormat(Type=0, Filename=str(caminho_pdf))
+        return caminho_pdf

@@ -165,3 +165,12 @@ class FaturamentoAtipico(FaturamentoCompleto):
         self.gerar_planilha_calculo_conesul()
 
         print("✅ FATURAMENTO ATÍPICO finalizado com sucesso!")
+
+    def _preview_title(self):
+        return "Faturamento (Atipico)"
+
+    def processar_preview(self):
+        self.preencher_front_vigia()
+        self.processar_MMO(self.wb1, self.wb2)
+        linhas = self.montar_report_atipico()
+        return len(linhas)

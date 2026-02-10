@@ -1311,8 +1311,11 @@ class FaturamentoSaoSebastiao:
     # EXECUÇÃO PRINCIPAL
     # ==================================================
 
-    def executar(self):
-        self.selecionar_pdfs_ogmo()
+    def executar(self, preview=False, selection=None):
+        if selection and isinstance(selection, dict) and selection.get("pdfs"):
+            self.caminhos_pdfs = [Path(p) for p in selection["pdfs"]]
+        else:
+            self.selecionar_pdfs_ogmo()
         self.carregar_pdfs()   # já faz pdfplumber e OCR só se precisar
         self.normalizar_texto_mantendo_linhas()
 
@@ -1358,18 +1361,88 @@ class FaturamentoSaoSebastiao:
             # NF
             escrever_nf_faturamento_completo(wb, navio, nd)
 
-            # ✅ SALVAR EXCEL (com wb aberto)
             nome_base = f"FATURAMENTO - ND {nd} - MV {navio}"
+
+            if preview:
+                preview_pdf = self._export_preview_pdf(wb, nome_base)
+                return {
+                    "text": "",
+                    "preview_pdf": str(preview_pdf) if preview_pdf else None,
+                    "selection": {"pdfs": [str(p) for p in self.caminhos_pdfs]},
+                }
+
+            # ✅ SALVAR EXCEL (com wb aberto)
             caminho_excel = salvar_excel_com_nome(wb, pasta, nome_base)
             print(f"💾 Excel salvo em: {caminho_excel}")
 
             # ✅ GERAR PDF SEM REABRIR O EXCEL (evita erro COM)
             gerar_pdf_do_wb_aberto(wb, pasta, nome_base, ignorar_abas=("NF",))
 
-
-
             print("✅ FATURAMENTO FINALIZADO")
 
         finally:
             wb.close()
             app.quit()
+
+    def _format_brl(self, value):
+        if value in (None, ""):
+            return "R$ 0,00"
+        try:
+            num = float(value)
+        except Exception:
+            return str(value)
+
+        texto = f"{num:,.2f}"
+        texto = texto.replace(",", "X").replace(".", ",").replace("X", ".")
+        return f"R$ {texto}"
+
+    def _build_preview_text(self, cliente, porto, navio, nd, nome_base):
+        linhas = [
+            "PRE-VISUALIZACAO",
+            "Processo: Faturamento Sao Sebastiao",
+            f"Cliente: {cliente}",
+            f"Porto: {porto}",
+            f"Navio: {navio}",
+            f"ND: {nd}",
+            f"Nome base: {nome_base}",
+        ]
+
+        if self.dados:
+            linhas.append("")
+            linhas.append("Dados extraidos:")
+            chaves = sorted(self.dados.keys())
+            limite = min(len(chaves), 15)
+            for i in range(limite):
+                k = chaves[i]
+                linhas.append(f"- {k}: {self._format_brl(self.dados[k])}")
+            if len(chaves) > limite:
+                linhas.append(f"... {len(chaves) - limite} itens omitidos")
+
+        return "\n".join(linhas)
+
+    def _export_preview_pdf(self, wb, nome_base):
+        caminho_pdf = Path(gettempdir()) / f"preview_{nome_base}.pdf"
+        if caminho_pdf.exists():
+            caminho_pdf.unlink()
+
+        vis_orig = {}
+        for sh in wb.sheets:
+            vis_orig[sh.name] = sh.api.Visible
+            if sh.name.strip().lower() == "nf":
+                sh.api.Visible = False
+
+        try:
+            wb.api.ExportAsFixedFormat(
+                Type=0,
+                Filename=str(caminho_pdf),
+                Quality=0,
+                IncludeDocProperties=True,
+                IgnorePrintAreas=False,
+                OpenAfterPublish=False,
+            )
+        finally:
+            for sh in wb.sheets:
+                if sh.name in vis_orig:
+                    sh.api.Visible = vis_orig[sh.name]
+
+        return caminho_pdf
