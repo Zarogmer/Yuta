@@ -6,6 +6,7 @@ from .programa_remover_periodo import ProgramaRemoverPeriodo
 from .faturamento_sao_sebastiao import FaturamentoSaoSebastiao
 from .gerar_relatorio import GerarRelatorio
 from .central_sanport import CentralSanport
+from .email_rascunho import criar_rascunho_email_cliente
 
 __all__ = [
     "FaturamentoCompleto",
@@ -16,4 +17,5 @@ __all__ = [
     "FaturamentoSaoSebastiao",
     "GerarRelatorio",
     "CentralSanport",
+    "criar_rascunho_email_cliente",
 ]

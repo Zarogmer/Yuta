@@ -1,4 +1,7 @@
 from yuta_helpers import *
+import pdfplumber
+import re
+from .email_rascunho import criar_rascunho_email_cliente
 
 
 class FaturamentoCompleto:
@@ -94,6 +97,50 @@ class FaturamentoCompleto:
                 pasta_navio_rede, self.dn, self.nome_navio
             )
 
+            nome_cliente = pasta_navio_rede.parent.name.strip()
+            caminho_report = (
+                pasta_navio_rede
+                / f"REPORT VIGIA - DN {self.dn} - MV {self.nome_navio}.pdf"
+            )
+            if nome_cliente.strip().upper() == "ROCHAMAR":
+                anexos = [caminho_report] if caminho_report.exists() else []
+            else:
+                anexos = [caminho_excel, caminho_pdf]
+                if caminho_report.exists():
+                    anexos.append(caminho_report)
+                if self.pdf_path and Path(self.pdf_path).exists():
+                    anexos.append(self.pdf_path)
+            try:
+                adiantamento = self.obter_valor_cargonave()
+                ws_report = self.wb2.sheets["REPORT VIGIA"]
+                try:
+                    self.wb2.app.calculate()
+                except Exception:
+                    pass
+                atracacao_ini, atracacao_fim = self._obter_atracacao_report(ws_report)
+                costs = ws_report.range("F24").value
+                adm = ws_report.range("D25").value
+                if nome_cliente.strip().upper() == "ROCHAMAR" and caminho_report.exists():
+                    pdf_costs, pdf_adm = self._extrair_valores_report_pdf(caminho_report)
+                    if pdf_costs is not None:
+                        costs = pdf_costs
+                    if pdf_adm is not None:
+                        adm = pdf_adm
+                criar_rascunho_email_cliente(
+                    nome_cliente,
+                    anexos=anexos,
+                    dn=str(self.dn),
+                    navio=self.nome_navio,
+                    adiantamento=adiantamento,
+                    atracacao_ini=atracacao_ini,
+                    atracacao_fim=atracacao_fim,
+                    costs=costs,
+                    adm=adm,
+                )
+                print("✅ Rascunho do Outlook criado com anexos.")
+            except Exception as e:
+                print(f"⚠️ Nao foi possivel criar rascunho do Outlook: {e}")
+
             fechar_workbooks(self.app, self.wb1, self.wb2)
 
             print(f"💾 Excel salvo em: {caminho_excel}")
@@ -126,6 +173,84 @@ class FaturamentoCompleto:
         texto = texto.replace(",", "X").replace(".", ",").replace("X", ".")
         return f"R$ {texto}"
 
+    def _extrair_valores_report_pdf(self, caminho_pdf: Path):
+        def parse_brl(txt: str) -> float | None:
+            m = re.search(r"R\$\s*([0-9\.]+,[0-9]{2})", txt)
+            if not m:
+                return None
+            try:
+                return float(m.group(1).replace(".", "").replace(",", "."))
+            except Exception:
+                return None
+
+        def extrair_valores_brl(txt: str) -> list[float]:
+            vals = []
+            for m in re.finditer(r"R\$\s*([0-9\.]+,[0-9]{2})", txt):
+                try:
+                    vals.append(float(m.group(1).replace(".", "").replace(",", ".")))
+                except Exception:
+                    continue
+            return vals
+
+        costs = None
+        adm = None
+        try:
+            with pdfplumber.open(str(caminho_pdf)) as pdf:
+                for page in pdf.pages:
+                    texto = page.extract_text() or ""
+                    if not texto:
+                        continue
+                    linhas = texto.splitlines()
+                    custos_idx = None
+                    for idx, line in enumerate(linhas):
+                        line_up = line.upper()
+                        if costs is None and "COST" in line_up:
+                            costs = parse_brl(line)
+                            if costs is not None:
+                                custos_idx = idx
+                        if adm is None and "ADM" in line_up:
+                            adm = parse_brl(line)
+                            if adm is None:
+                                vals = extrair_valores_brl(line)
+                                if vals:
+                                    adm = vals[0]
+                    if costs is not None and adm is None and custos_idx is not None:
+                        for next_line in linhas[custos_idx + 1: custos_idx + 4]:
+                            vals = extrair_valores_brl(next_line)
+                            if vals:
+                                adm = vals[0]
+                                break
+                    if costs is not None and adm is not None:
+                        break
+        except Exception:
+            return None, None
+
+        return costs, adm
+
+    def _obter_atracacao_report(self, ws_report):
+        datas = []
+        valores = ws_report.range("C22:C500").value
+        if not isinstance(valores, list):
+            valores = [valores]
+        for v in valores:
+            if v in (None, ""):
+                continue
+            if isinstance(v, datetime):
+                datas.append(v.date())
+                continue
+            if isinstance(v, date):
+                datas.append(v)
+                continue
+            if isinstance(v, str):
+                try:
+                    d = datetime.strptime(v.strip(), "%d/%m/%Y").date()
+                    datas.append(d)
+                except Exception:
+                    continue
+        if not datas:
+            return None, None
+        return min(datas), max(datas)
+
     def _build_preview_text(self, total_periodos, nome_base):
         ws_report = self.wb2.sheets["REPORT VIGIA"]
         linhas = []
@@ -155,6 +280,12 @@ class FaturamentoCompleto:
         caminho_pdf = Path(gettempdir()) / f"preview_{nome_base}.pdf"
         if caminho_pdf.exists():
             caminho_pdf.unlink()
+
+        try:
+            self.wb2.app.calculation = "automatic"
+            self.wb2.app.calculate()
+        except Exception:
+            pass
 
         aba_nf = None
         for ws in self.wb2.sheets:
@@ -687,14 +818,6 @@ class FaturamentoCompleto:
 
 
     def processar_MMO(self, wb_navio, wb_cliente):
-        """
-        MMO:
-        - LÊ: último valor da coluna G da aba 'Resumo' (NAVIO)
-        - ESCREVE: F25 da aba 'REPORT VIGIA' (CLIENTE)
-        """
-
-        print("   🔹 Iniciando MMO...")
-
         # ---------- REPORT VIGIA (CLIENTE) ----------
         try:
             ws_report = wb_cliente.sheets["REPORT VIGIA"]

@@ -1,4 +1,5 @@
 from yuta_helpers import *
+from .email_rascunho import criar_rascunho_email_cliente
 
 
 class FaturamentoSaoSebastiao:
@@ -86,6 +87,10 @@ class FaturamentoSaoSebastiao:
         # SEA SIDE — PSS (mesmo layout de colagem do report)
         if "sea side" in nome_norm and "pss" in nome_norm:
             return "SEA SIDE", "PSS"
+
+        # AQUARIUS — PSS
+        if "aquarius" in nome_norm and "pss" in nome_norm:
+            return "AQUARIUS", "PSS"
 
         # PADRÃO
         return pasta_cliente.name.strip().upper(), "PADRAO"
@@ -1376,7 +1381,23 @@ class FaturamentoSaoSebastiao:
             print(f"💾 Excel salvo em: {caminho_excel}")
 
             # ✅ GERAR PDF SEM REABRIR O EXCEL (evita erro COM)
-            gerar_pdf_do_wb_aberto(wb, pasta, nome_base, ignorar_abas=("NF",))
+            caminho_pdf = gerar_pdf_do_wb_aberto(
+                wb, pasta, nome_base, ignorar_abas=("NF",)
+            )
+
+            nome_cliente = f"{cliente} - {porto}" if porto != "PADRAO" else cliente
+            anexos = [caminho_excel, caminho_pdf]
+            anexos.extend(self.caminhos_pdfs)
+            try:
+                criar_rascunho_email_cliente(
+                    nome_cliente,
+                    anexos=anexos,
+                    dn=str(nd),
+                    navio=navio,
+                )
+                print("✅ Rascunho do Outlook criado com anexos.")
+            except Exception as e:
+                print(f"⚠️ Nao foi possivel criar rascunho do Outlook: {e}")
 
             print("✅ FATURAMENTO FINALIZADO")
 

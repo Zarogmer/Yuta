@@ -1,4 +1,5 @@
 from yuta_helpers import *
+from .email_rascunho import criar_rascunho_email_cliente
 
 
 class FaturamentoDeAcordo:
@@ -145,6 +146,19 @@ class FaturamentoDeAcordo:
                 ws=ws_front
             )
             print(f"📑 PDF FRONT salvo em: {caminho_pdf}")
+
+            nome_cliente = pasta_navio.parent.name.strip()
+            anexos = [caminho_excel, caminho_pdf]
+            try:
+                criar_rascunho_email_cliente(
+                    nome_cliente,
+                    anexos=anexos,
+                    dn=str(dn),
+                    navio=nome_navio,
+                )
+                print("✅ Rascunho do Outlook criado com anexos.")
+            except Exception as e:
+                print(f"⚠️ Nao foi possivel criar rascunho do Outlook: {e}")
 
         finally:
             fechar_workbooks(app=app, wb_cliente=wb)
