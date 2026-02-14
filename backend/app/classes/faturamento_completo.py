@@ -2,6 +2,7 @@ from yuta_helpers import *
 import pdfplumber
 import re
 from .email_rascunho import criar_rascunho_email_cliente
+from .criar_pasta import CriarPasta
 
 
 class FaturamentoCompleto:
@@ -78,10 +79,16 @@ class FaturamentoCompleto:
 
             if caminho_excel.exists():
                 caminho_excel.unlink()
+            
+            # ✅ Verifica se é cliente WILLIAMS (apenas FRONT VIGIA no PDF)
+            nome_cliente = pasta_navio_rede.parent.name.strip()
+            apenas_front = "WILLIAMS" in nome_cliente.upper()
+            
             gerar_pdf_faturamento_completo(
                 self.wb2,
                 pasta_navio_rede,
-                nome_base
+                nome_base,
+                apenas_front=apenas_front
             )
 
             # SALVAR EXCEL (local → rede)
@@ -105,7 +112,7 @@ class FaturamentoCompleto:
             if nome_cliente.strip().upper() == "ROCHAMAR":
                 anexos = [caminho_report] if caminho_report.exists() else []
             else:
-                anexos = [caminho_excel, caminho_pdf]
+                anexos = [caminho_pdf]  # ✅ Removido Excel dos anexos
                 if caminho_report.exists():
                     anexos.append(caminho_report)
                 if self.pdf_path and Path(self.pdf_path).exists():
@@ -312,6 +319,7 @@ class FaturamentoCompleto:
     def processar_preview(self):
         # Front e report, sem gerar arquivos externos
         self.preencher_front_vigia()
+        # ⚠️ NÃO atualiza planilha de controle no preview (evita duplicação)
 
         if "REPORT VIGIA" not in [s.name for s in self.wb2.sheets]:
             raise RuntimeError("Aba 'REPORT VIGIA' não encontrada")
@@ -406,6 +414,9 @@ class FaturamentoCompleto:
         self.gerar_planilha_calculo_conesul()
 
         print("✅ REPORT VIGIA atualizado com sucesso!")
+        
+        # ✅ Atualizar planilha de controle APÓS tudo estar pronto
+        self.atualizar_planilha_controle()
 
 
     def escrever_cn_credit_note(self, texto_cn):
@@ -501,6 +512,105 @@ class FaturamentoCompleto:
         except Exception as e:
             print(f"❌ Erro ao preencher FRONT VIGIA: {e}")
             raise
+
+    def atualizar_planilha_controle(self):
+        """
+        Atualiza a planilha de controle com informações do faturamento VIGIA.
+        Preenche colunas B (data), C (serviço), D (ETA), E (ETB), F (cliente), G (navio), J (DN), K (MMO/COSTS).
+        """
+        try:
+            # Obter nome do cliente da pasta
+            cliente = self.pasta_saida_final.parent.name.strip()
+            
+            # Obter data atual
+            from datetime import datetime
+            data_hoje = datetime.now().strftime("%d/%m/%Y")
+            
+            # Obter datas diretamente do RESUMO (NAVIO) em formato date
+            data_min, data_max = self.obter_datas_extremos(self.ws1)
+            
+            # Formatar as datas como dd/mm/yyyy
+            eta = data_min.strftime("%d/%m/%Y") if data_min else ""
+            etb = data_max.strftime("%d/%m/%Y") if data_max else ""
+            
+            # Buscar valor de COSTS no REPORT VIGIA
+            mmo = self._buscar_costs_report()
+            
+            # Usar CriarPasta para gravar na planilha
+            criar_pasta = CriarPasta()
+            criar_pasta._gravar_planilha(
+                cliente=cliente,
+                navio=self.nome_navio,
+                dn=self.dn,
+                servico="VIGIA",
+                data=data_hoje,
+                eta=eta,
+                etb=etb,
+                mmo=mmo
+            )
+            
+        except Exception as e:
+            print(f"⚠️ Erro ao atualizar planilha de controle: {e}")
+    
+    def _buscar_costs_report(self):
+        """
+        Busca o valor de COSTS no REPORT VIGIA dinamicamente.
+        O valor do COSTS SEMPRE está na coluna G, independente de onde está a palavra 'COSTS'.
+        Retorna formato brasileiro sem R$: 16.227,85
+        """
+        import re
+        
+        try:
+            ws_report = self.wb2.sheets["REPORT VIGIA"]
+            
+            # Procura em um range amplo (linhas 1 a 150, todas as colunas)
+            for linha in range(1, 151):
+                for col_letra in ['C', 'D', 'E', 'F', 'G', 'H']:
+                    try:
+                        valor_celula = ws_report.range(f"{col_letra}{linha}").value
+                        
+                        # Verifica se contém COSTS ou MMO
+                        if valor_celula and isinstance(valor_celula, str):
+                            texto_upper = valor_celula.upper().strip()
+                            
+                            if "COSTS" in texto_upper or "MMO" in texto_upper:
+                                # ✅ SEMPRE busca o valor na coluna G da MESMA linha
+                                try:
+                                    celula_g = ws_report.range(f"G{linha}")
+                                    
+                                    # Pega o TEXTO formatado (como aparece no Excel)
+                                    valor_texto = None
+                                    try:
+                                        valor_texto = celula_g.api.Text
+                                    except:
+                                        valor_texto = str(celula_g.value) if celula_g.value else None
+                                    
+                                    if valor_texto and valor_texto.strip():
+                                        # Remove formatação e converte
+                                        try:
+                                            valor_limpo = valor_texto.replace("R$", "").replace(" ", "").strip()
+                                            # Se já está no formato brasileiro (1.234,56), converte
+                                            if "," in valor_limpo:
+                                                valor_limpo = valor_limpo.replace(".", "").replace(",", ".")
+                                            valor_num = float(valor_limpo)
+                                            
+                                            # Retorna APENAS com vírgula decimal (sem ponto de milhar)
+                                            resultado = f"{valor_num:.2f}".replace(".", ",")
+                                            return resultado
+                                        except Exception as e:
+                                            # Se já estiver formatado, remove R$ e pontos
+                                            texto_limpo = valor_texto.replace("R$", "").replace(".", "").strip()
+                                            return texto_limpo
+                                except:
+                                    pass
+                    except:
+                        continue
+            
+            return ""
+            
+        except Exception as e:
+            print(f"❌ Erro ao buscar COSTS: {e}")
+            return ""
 
 
 #==================== REPORT =====================#
@@ -822,18 +932,15 @@ class FaturamentoCompleto:
         try:
             ws_report = wb_cliente.sheets["REPORT VIGIA"]
         except:
-            print("   ⚠️ Aba 'REPORT VIGIA' não encontrada no CLIENTE. MMO ignorado.")
             return
 
         if str(ws_report.range("E25").value).strip().upper() != "MMO":
-            print("   ℹ️ MMO não aplicável (E25 != 'MMO').")
             return
 
         # ---------- RESUMO (NAVIO) ----------
         try:
             ws_resumo = wb_navio.sheets["Resumo"]
         except:
-            print("   ⚠️ Aba 'Resumo' não encontrada no NAVIO. MMO ignorado.")
             return
 
         # ---------- LÊ COLUNA G ----------
@@ -841,7 +948,6 @@ class FaturamentoCompleto:
         valores_validos = [v for v in valores if v not in (None, "")]
 
         if not valores_validos:
-            print("   ℹ️ Coluna G vazia no Resumo. MMO ignorado.")
             return
 
         ultimo_valor = valores_validos[-1]
@@ -919,7 +1025,7 @@ class FaturamentoCompleto:
             # ==========================
             # 📄 MODELO WORD
             # ==========================
-            pasta_modelos = self.pasta_faturamentos.parent / "CARGONAVE"
+            pasta_modelos = self.pasta_faturamentos / "CARGONAVE"
             modelos = list(pasta_modelos.glob("RECIBO - YUTA.doc"))
 
             if not modelos:

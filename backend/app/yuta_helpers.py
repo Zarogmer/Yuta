@@ -19,6 +19,8 @@ from datetime import datetime, date, timedelta, timezone
 import tkinter as tk
 from tkinter import Tk, filedialog
 
+from config_manager import obter_caminho_base_faturamentos
+
 import pandas as pd
 import xlwings as xw
 import openpyxl
@@ -103,22 +105,33 @@ def copiar_para_temp_word(caminho_original: Path) -> Path:
 # 2️⃣ Localizar pasta FATURAMENTOS automaticamente
 # ---------------------------
 def obter_pasta_faturamentos() -> Path:
+    """
+    Localiza a pasta FATURAMENTOS usando o sistema de configuração.
+    Retorna a pasta base (ex: ...\Central de Documentos - 01. FATURAMENTOS)
+    """
     print("\n=== BUSCANDO PASTA FATURAMENTOS AUTOMATICAMENTE ===")
 
-    bases = [
-        Path.home() / "SANPORT LOGÍSTICA PORTUÁRIA LTDA",
-        Path.home() / "OneDrive - SANPORT LOGÍSTICA PORTUÁRIA LTDA",
-    ]
+    try:
+        # Usa o sistema de configuração centralizado
+        caminho = obter_caminho_base_faturamentos()
+        print(f"✅ Pasta FATURAMENTOS encontrada em:\n   {caminho}")
+        return caminho
+    except FileNotFoundError:
+        # Fallback: tenta o método antigo
+        bases = [
+            Path.home() / "SANPORT LOGÍSTICA PORTUÁRIA LTDA",
+            Path.home() / "OneDrive - SANPORT LOGÍSTICA PORTUÁRIA LTDA",
+        ]
 
-    for base in bases:
-        if base.exists():
-            candidatos = list(base.rglob("FATURAMENTOS"))
-            for c in candidatos:
-                if "01. FATURAMENTOS" in c.parent.as_posix():
-                    print(f"✅ Pasta FATURAMENTOS encontrada em:\n   {c}")
-                    return c
+        for base in bases:
+            if base.exists():
+                candidatos = list(base.rglob("FATURAMENTOS"))
+                for c in candidatos:
+                    if "01. FATURAMENTOS" in c.parent.as_posix():
+                        print(f"✅ Pasta FATURAMENTOS encontrada em:\n   {c}")
+                        return c
 
-    raise FileNotFoundError("Pasta FATURAMENTOS não localizada")
+        raise FileNotFoundError("Pasta FATURAMENTOS não localizada")
 
 
 
@@ -134,9 +147,8 @@ def abrir_workbooks_de_acordo(pasta_faturamentos: Path, pasta_navio: Path):
     pasta_cliente = pasta_navio.parent
     nome_cliente = pasta_cliente.name.strip()
 
-    caminho_cliente_rede = pasta_faturamentos / f"{nome_cliente}.xlsx"
-    if not caminho_cliente_rede.exists():
-        raise FileNotFoundError(f"Faturamento não encontrado: {caminho_cliente_rede}")
+    # 🔍 Busca flexível do arquivo do cliente na subpasta FATURAMENTOS
+    caminho_cliente_rede = localizar_arquivo_cliente(pasta_faturamentos / "FATURAMENTOS", nome_cliente)
 
     caminho_cliente_local = copiar_para_temp_xlwings(caminho_cliente_rede)
 
@@ -226,6 +238,80 @@ def obter_nome_navio_da_pasta(pasta_navio: Path) -> str:
 #===================SISTEMA=========================================#
 
 
+def localizar_arquivo_cliente(pasta_faturamentos: Path, nome_cliente: str) -> Path:
+    """
+    Localiza o arquivo .xlsx do cliente na pasta de faturamentos.
+    Faz busca flexível para encontrar mesmo com nomes diferentes.
+    
+    Ex: Se a pasta é "WILLIAMS", pode encontrar:
+    - WILLIAMS.xlsx
+    - WILLIAMS (PSS).xlsx
+    - WILLIAMS - Porto.xlsx
+    """
+    import unicodedata
+    
+    def normalizar(texto: str) -> str:
+        """Remove acentos, espaços, parênteses e caracteres especiais"""
+        texto = texto.upper().strip()
+        texto = unicodedata.normalize("NFKD", texto)
+        texto = "".join(ch for ch in texto if not unicodedata.combining(ch))
+        texto = re.sub(r"\([^)]*\)", "", texto)  # Remove parênteses
+        texto = re.sub(r"[^A-Z0-9]+", "", texto)  # Remove não-alfanuméricos
+        return texto
+    
+    # 1) Tentativa direta: nome exato
+    caminho_direto = pasta_faturamentos / f"{nome_cliente}.xlsx"
+    if caminho_direto.exists():
+        return caminho_direto
+    
+    # 2) Busca flexível: normaliza e compara
+    nome_normalizado = normalizar(nome_cliente)
+    
+    # Pega o nome base (sem parênteses)
+    nome_base = re.sub(r"\s*\([^)]*\)\s*", " ", nome_cliente).strip()
+    base_normalizado = normalizar(nome_base)
+    
+    candidatos = []
+    
+    for arquivo in pasta_faturamentos.glob("*.xlsx"):
+        if arquivo.name.startswith("~"):  # Ignora arquivos temporários
+            continue
+        
+        arquivo_norm = normalizar(arquivo.stem)
+        
+        # Match exato (normalizado)
+        if arquivo_norm == nome_normalizado:
+            candidatos.append(arquivo)
+            continue
+        
+        # Match parcial (contém o nome base)
+        if base_normalizado and base_normalizado in arquivo_norm:
+            candidatos.append(arquivo)
+    
+    if len(candidatos) == 1:
+        arquivo_encontrado = candidatos[0]
+        if arquivo_encontrado.name != f"{nome_cliente}.xlsx":
+            print(f"📎 Arquivo encontrado: {arquivo_encontrado.name} (cliente: {nome_cliente})")
+        return arquivo_encontrado
+    
+    if len(candidatos) > 1:
+        # Se há múltiplos candidatos, prefere o mais curto (mais específico)
+        candidatos.sort(key=lambda p: len(p.name))
+        arquivo_encontrado = candidatos[0]
+        print(f"📎 Múltiplos arquivos encontrados, usando: {arquivo_encontrado.name}")
+        return arquivo_encontrado
+    
+    # Não encontrado
+    arquivos_disponiveis = [f.name for f in pasta_faturamentos.glob('*.xlsx') if not f.name.startswith('~')]
+    raise FileNotFoundError(
+        f"Arquivo de faturamento não encontrado para o cliente '{nome_cliente}'.\n"
+        f"Pasta de faturamentos: {pasta_faturamentos}\n"
+        f"Procurado: {nome_cliente}.xlsx\n"
+        f"Arquivos disponíveis: {', '.join(arquivos_disponiveis[:10])}"
+        + ("..." if len(arquivos_disponiveis) > 10 else "")
+    )
+
+
 def abrir_workbooks(pasta_faturamentos: Path, caminho_navio_rede: Path | str | None = None):
     if not caminho_navio_rede:
         caminho_navio_rede = selecionar_arquivo_navio()
@@ -237,11 +323,8 @@ def abrir_workbooks(pasta_faturamentos: Path, caminho_navio_rede: Path | str | N
     pasta_cliente = pasta_navio.parent
     nome_cliente = pasta_cliente.name.strip()
 
-    caminho_cliente_rede = pasta_faturamentos / f"{nome_cliente}.xlsx"
-    if not caminho_cliente_rede.exists():
-        raise FileNotFoundError(
-            f"Arquivo de faturamento não encontrado:\n{caminho_cliente_rede}"
-        )
+    # 🔍 Busca flexível do arquivo do cliente na subpasta FATURAMENTOS
+    caminho_cliente_rede = localizar_arquivo_cliente(pasta_faturamentos / "FATURAMENTOS", nome_cliente)
 
     # 🔥 COPIA AMBOS PARA LOCAL
     caminho_navio_local = copiar_para_temp_xlwings(caminho_navio_rede)
@@ -499,11 +582,34 @@ def gerar_pdf_workbook_inteiro(wb, pasta_saida: Path, nome_base: str) -> Path:
     return caminho_pdf
 
 
-def gerar_pdf_faturamento_completo(wb, pasta_saida: Path, nome_base: str) -> Path:
+def gerar_pdf_faturamento_completo(wb, pasta_saida: Path, nome_base: str, apenas_front=False) -> Path:
     caminho_pdf = pasta_saida / f"{nome_base}.pdf"
 
     if caminho_pdf.exists():
         caminho_pdf.unlink()
+
+    # ✅ Se apenas_front=True, exporta só FRONT VIGIA
+    if apenas_front:
+        # Encontra a aba FRONT VIGIA
+        ws_front = None
+        for ws in wb.sheets:
+            if ws.name.strip().upper() == "FRONT VIGIA":
+                ws_front = ws
+                break
+        
+        if ws_front:
+            # Exporta apenas essa aba
+            ws_front.api.ExportAsFixedFormat(
+                Type=0,  # PDF
+                Filename=str(caminho_pdf),
+                Quality=0,
+                IncludeDocProperties=True,
+                IgnorePrintAreas=False,
+                OpenAfterPublish=False
+            )
+            return caminho_pdf
+        else:
+            raise RuntimeError("Aba FRONT VIGIA não encontrada para exportar PDF")
 
     # 🔒 Oculta aba NF (se existir)
     aba_nf = None
@@ -552,7 +658,7 @@ def extrair_identidade_navio(pasta_navio: Path) -> tuple[str, str]:
 #===================FATURAMENTO SÃO SEBASTIÃO=========================================#
 
 
-def gerar_pdf_do_wb_aberto(wb, pasta_saida, nome_base, ignorar_abas=("nf",)):
+def gerar_pdf_do_wb_aberto(wb, pasta_saida, nome_base, ignorar_abas=("nf",), apenas_front=False):
     caminho_pdf = Path(pasta_saida) / f"{nome_base}.pdf"
 
     # 1) se existir e estiver aberto, já avisa o motivo
@@ -564,6 +670,31 @@ def gerar_pdf_do_wb_aberto(wb, pasta_saida, nome_base, ignorar_abas=("nf",)):
 
     app = wb.app
     app.api.DisplayAlerts = False
+
+    # ✅ Se apenas_front=True, exporta só FRONT VIGIA
+    if apenas_front:
+        # Encontra a aba FRONT VIGIA
+        ws_front = None
+        for sh in wb.sheets:
+            if sh.name.strip().upper() == "FRONT VIGIA":
+                ws_front = sh
+                break
+        
+        if ws_front:
+            # Ativa e exporta apenas essa aba
+            ws_front.activate()
+            ws_front.api.ExportAsFixedFormat(
+                Type=0,  # xlTypePDF
+                Filename=str(caminho_pdf),
+                Quality=0,  # xlQualityStandard
+                IncludeDocProperties=True,
+                IgnorePrintAreas=False,
+                OpenAfterPublish=False
+            )
+            print(f"📄 PDF gerado (apenas FRONT VIGIA): {caminho_pdf}")
+            return caminho_pdf
+        else:
+            raise RuntimeError("Aba FRONT VIGIA não encontrada para exportar PDF")
 
     # 2) guarda visibilidade, oculta as que não devem sair no PDF
     vis_orig = {}

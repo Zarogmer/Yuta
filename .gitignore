@@ -4,3 +4,6 @@ dist/
 __pycache__/
 *.exe
 *.spec
+
+# Configuração local (cada PC tem seu próprio caminho)
+config.json

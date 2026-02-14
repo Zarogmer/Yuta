@@ -1,4 +1,5 @@
 from yuta_helpers import *
+from .criar_pasta import CriarPasta
 from .email_rascunho import criar_rascunho_email_cliente
 
 
@@ -119,6 +120,8 @@ class FaturamentoDeAcordo:
 
             # 🔧 Regras por cliente
             self.aplicar_regras_cliente(ws_front)
+            
+            # ⚠️ NÃO atualiza planilha de controle aqui (será feito após preview)
 
             print("✅ Faturamento De Acordo concluído!")
 
@@ -129,6 +132,9 @@ class FaturamentoDeAcordo:
                     "preview_pdf": str(preview_pdf) if preview_pdf else None,
                     "selection": {"pasta_navio": str(pasta_navio)},
                 }
+
+            # ✅ ATUALIZAR PLANILHA DE CONTROLE (só na execução final)
+            self._atualizar_planilha_controle(pasta_navio, nome_navio, dn, data_extenso)
 
             # ✅ SALVAR EXCEL (ainda dentro do try, com wb aberto)
             caminho_excel = salvar_excel_com_nome(
@@ -148,7 +154,7 @@ class FaturamentoDeAcordo:
             print(f"📑 PDF FRONT salvo em: {caminho_pdf}")
 
             nome_cliente = pasta_navio.parent.name.strip()
-            anexos = [caminho_excel, caminho_pdf]
+            anexos = [caminho_pdf]  # ✅ Removido Excel dos anexos
             try:
                 criar_rascunho_email_cliente(
                     nome_cliente,
@@ -162,6 +168,38 @@ class FaturamentoDeAcordo:
 
         finally:
             fechar_workbooks(app=app, wb_cliente=wb)
+
+    def _atualizar_planilha_controle(self, pasta_navio: Path, nome_navio: str, dn: str, data_extenso: str):
+        """
+        Atualiza a planilha de controle com informações do DE ACORDO.
+        Preenche colunas B (data), C (serviço), D (ETA), E (ETB), F (cliente), G (navio), J (DN), K (MMO).
+        """
+        try:
+            cliente = pasta_navio.parent.name.strip()
+            
+            # Obter data atual em formato dd/mm/yyyy
+            from datetime import datetime
+            data_hoje = datetime.now().strftime("%d/%m/%Y")
+            
+            # Para DE ACORDO, D16 e D17 são iguais (mesma data) - usar formato dd/mm/yyyy
+            # Usar CriarPasta para gravar na planilha
+            criar_pasta = CriarPasta()
+            criar_pasta._gravar_planilha(
+                cliente=cliente,
+                navio=nome_navio,
+                dn=dn,
+                servico="DE ACORDO",
+                data=data_hoje,
+                eta=data_hoje,  # Mesmo dia
+                etb=data_hoje,  # Mesmo dia
+                mmo=""  # DE ACORDO não tem COSTS/MMO
+            )
+            
+            print("✅ Planilha de controle atualizada com sucesso!")
+            
+        except Exception as e:
+            print(f"⚠️ Erro ao atualizar planilha de controle: {e}")
+            # Não levanta exceção para não interromper o fluxo principal
 
     def _build_preview_text(self, nome_base, dn, nome_navio, data_extenso):
         linhas = [

@@ -21,6 +21,7 @@ from backend.app import (
     GerarRelatorio,
     ProgramaCopiarPeriodo,
     ProgramaRemoverPeriodo,
+    CriarPasta,
     validar_licenca,
 )
 
@@ -49,6 +50,7 @@ OPCOES_MENU = [
     "FAZER PONTO",
     "DESFAZER PONTO - X",
     "RELATORIO - X",
+    "CRIAR PASTA",
     "SAIR DO PROGRAMA",
 ]
 
@@ -78,6 +80,9 @@ def _executar_acao(indice: int) -> dict:
             return {"msg": "Relatorio finalizado"}
         return {"msg": "Relatorio nao implementado"}
     if indice == 7:
+        CriarPasta().executar()
+        return {"msg": "Criar Pasta finalizado"}
+    if indice == 8:
         return {"msg": "Saindo (acao ignorada na web)"}
 
     raise ValueError("Indice invalido")

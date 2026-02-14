@@ -1,7 +1,7 @@
 import queue
 import threading
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox, filedialog
 from pathlib import Path
 
 from pdf2image import convert_from_path
@@ -15,6 +15,12 @@ from classes import (
     GerarRelatorio,
     ProgramaCopiarPeriodo,
     ProgramaRemoverPeriodo,
+    CriarPasta,
+)
+from config_manager import (
+    obter_caminho_configurado,
+    configurar_caminho_base,
+    listar_caminhos_detectados,
 )
 
 
@@ -22,8 +28,8 @@ class DesktopApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Yuta - Central de Processos")
-        self.geometry("980x640")
-        self.minsize(860, 560)
+        self.geometry("1280x900+100+50")
+        self.minsize(980, 640)
 
         self._log_queue = queue.Queue()
         self._running = False
@@ -341,6 +347,8 @@ class DesktopApp(tk.Tk):
             {"label": "🕒 Fazer Ponto", "action": lambda: ProgramaCopiarPeriodo(debug=True).executar()},
             {"label": "↩️ Desfazer Ponto", "action": lambda: ProgramaRemoverPeriodo(debug=True).executar()},
             {"label": "📊 Relatório", "action": self._relatorio_safe},
+            {"label": "📁 Criar Pasta", "action": self._criar_pasta_ui},
+            {"label": "⚙️ Configurações", "action": self._configuracoes_ui},
         ]
 
     def _relatorio_safe(self):
@@ -349,7 +357,106 @@ class DesktopApp(tk.Tk):
         else:
             self._write_log("Relatório não implementado.\n", tag="warn")
 
+    def _criar_pasta_ui(self):
+        """Coleta os dados e inicia a criação da pasta"""
+        dados = self._pedir_dados_criar_pasta()
+        if not dados:
+            return
+            
+        cliente, navio, dn = dados
+
+        self._write_log(
+            f"Criar pasta: cliente={cliente} | navio={navio} | DN={dn} (automático)\n",
+            tag="info",
+        )
+
+        # Define a ação que será executada na thread
+        def action():
+            cp = CriarPasta()
+            info = cp.executar(
+                cliente=cliente,
+                navio=navio,
+                dn=dn,
+                return_info=True,
+                log_callback=self._write_log,
+            )
+            
+            destino = info["destino"]
+            
+            # Verificação final
+            if destino.exists():
+                self._write_log(f"✓ Confirmado: pasta existe no sistema\n", tag="ok")
+            else:
+                self._write_log(f"⚠️ AVISO: Pasta não encontrada após criação!\n", tag="err")
+
+        # Executa a ação na thread
+        self._run_action(action)
+
+    def _pedir_dados_criar_pasta(self):
+        dialog = tk.Toplevel(self)
+        dialog.title("Criar Pasta")
+        dialog.configure(bg="#0b1220")
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        frame = ttk.Frame(dialog, style="Card.TFrame")
+        frame.pack(padx=16, pady=14, fill="both", expand=True)
+
+        # Cliente
+        ttk.Label(frame, text="Cliente", style="Section.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 4))
+        cp = CriarPasta()
+        clientes = cp.listar_clientes()
+        combo_state = "readonly" if clientes else "normal"
+        cliente_var = tk.StringVar(value=clientes[0] if clientes else "")
+        cliente_cb = ttk.Combobox(frame, values=clientes, textvariable=cliente_var, state=combo_state, width=38)
+        cliente_cb.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+
+        # Nome do navio
+        ttk.Label(frame, text="Nome do navio", style="Section.TLabel").grid(row=2, column=0, sticky="w", pady=(0, 4))
+        navio_var = tk.StringVar()
+        navio_entry = ttk.Entry(frame, textvariable=navio_var, width=40)
+        navio_entry.grid(row=3, column=0, sticky="ew", pady=(0, 10))
+
+        # DN automático (apenas exibição)
+        proximo_dn = cp.obter_proximo_dn()
+        ttk.Label(frame, text="DN (automático)", style="Section.TLabel").grid(row=4, column=0, sticky="w", pady=(0, 4))
+        dn_label = ttk.Label(frame, text=proximo_dn, foreground="#94a3b8", background="#0f172a", font=("Segoe UI", 11, "bold"))
+        dn_label.grid(row=5, column=0, sticky="w", pady=(0, 12))
+
+        buttons = ttk.Frame(frame, style="Card.TFrame")
+        buttons.grid(row=6, column=0, sticky="e")
+
+        resultado = {"valor": None}
+
+        def on_ok():
+            cliente = cliente_var.get().strip()
+            navio = navio_var.get().strip()
+
+            if not cliente or not navio:
+                messagebox.showwarning("Dados incompletos", "Preencha cliente e navio.")
+                return
+
+            # DN é obtido automaticamente
+            dn = cp.obter_proximo_dn()
+            resultado["valor"] = (cliente, navio, dn)
+            dialog.destroy()
+
+        def on_cancel():
+            dialog.destroy()
+
+        ttk.Button(buttons, text="Cancelar", style="Ghost.TButton", command=on_cancel).pack(side="right", padx=(8, 0))
+        ttk.Button(buttons, text="OK", style="Action.TButton", command=on_ok).pack(side="right")
+
+        navio_entry.focus_set()
+        dialog.wait_window()
+        return resultado["valor"]
+
     def _handle_menu_action(self, item):
+        # Casos especiais que precisam coletar dados antes de executar
+        if item["label"] == "📁 Criar Pasta":
+            self._criar_pasta_ui()  # Chama diretamente (não via _run_action)
+            return
+        
         if item.get("preview"):
             self._run_preview(item["preview"], item["action"], item["label"])
         else:
@@ -372,7 +479,9 @@ class DesktopApp(tk.Tk):
                 action()
                 self._write_log("\n✅ Concluído.\n", tag="ok")
             except Exception as exc:
-                self._write_log(f"\n❌ Erro: {exc}\n", tag="err")
+                import traceback
+                self._write_log(f"\n❌ ERRO: {exc}\n", tag="err")
+                self._write_log(f"Traceback:\n{traceback.format_exc()}\n", tag="err")
             finally:
                 self._log_queue.put(("__DONE__", None))
 
@@ -599,6 +708,120 @@ class DesktopApp(tk.Tk):
         self._preview_canvas.delete("preview_img")
         if self._preview_placeholder:
             self._preview_canvas.itemconfigure(self._preview_placeholder, state="normal")
+
+    # ---------------------------
+    # Configurações
+    # ---------------------------
+    def _configuracoes_ui(self):
+        """Abre diálogo para configurar o caminho base de faturamentos"""
+        dialog = tk.Toplevel(self)
+        dialog.title("Configurações")
+        dialog.configure(bg="#0b1220")
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        frame = ttk.Frame(dialog, style="Card.TFrame")
+        frame.pack(padx=16, pady=14, fill="both", expand=True)
+
+        ttk.Label(frame, text="Caminho Base de Faturamentos", style="Section.TLabel").grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 8)
+        )
+
+        # Mostra caminho atual
+        caminho_atual = obter_caminho_configurado()
+        if caminho_atual:
+            ttk.Label(frame, text="Caminho atual:", style="Sub.TLabel").grid(
+                row=1, column=0, columnspan=2, sticky="w", pady=(0, 4)
+            )
+            caminho_label = tk.Text(
+                frame,
+                height=2,
+                width=60,
+                wrap="word",
+                bg="#0b1220",
+                fg="#94a3b8",
+                font=("Segoe UI", 9),
+                relief="flat",
+            )
+            caminho_label.insert("1.0", caminho_atual)
+            caminho_label.config(state="disabled")
+            caminho_label.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        else:
+            ttk.Label(
+                frame,
+                text="⚠️ Nenhum caminho configurado (usando auto-detecção)",
+                style="Sub.TLabel",
+            ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 12))
+
+        # Lista caminhos detectados
+        caminhos_detectados = listar_caminhos_detectados()
+        if caminhos_detectados:
+            ttk.Label(frame, text="Caminhos detectados:", style="Sub.TLabel").grid(
+                row=3, column=0, columnspan=2, sticky="w", pady=(0, 4)
+            )
+            for i, caminho in enumerate(caminhos_detectados):
+                ttk.Label(frame, text=f"✓ {caminho}", style="Sub.TLabel").grid(
+                    row=4 + i, column=0, columnspan=2, sticky="w", pady=(0, 2)
+                )
+
+        # Botões de ação
+        botoes_frame = ttk.Frame(frame, style="Card.TFrame")
+        botoes_frame.grid(
+            row=10, column=0, columnspan=2, sticky="ew", pady=(16, 0)
+        )
+
+        def escolher_caminho():
+            caminho = filedialog.askdirectory(
+                title="Selecione a pasta: Central de Documentos - 01. FATURAMENTOS",
+                initialdir=Path.home(),
+            )
+            if caminho:
+                if configurar_caminho_base(caminho):
+                    messagebox.showinfo(
+                        "Sucesso",
+                        f"Caminho configurado com sucesso!\n\n{caminho}",
+                        parent=dialog,
+                    )
+                    dialog.destroy()
+                else:
+                    messagebox.showerror(
+                        "Erro",
+                        "O caminho selecionado não existe ou não é válido.",
+                        parent=dialog,
+                    )
+
+        def usar_auto_detectado():
+            if caminhos_detectados:
+                caminho = str(caminhos_detectados[0])
+                if configurar_caminho_base(caminho):
+                    messagebox.showinfo(
+                        "Sucesso",
+                        f"Caminho configurado:\n\n{caminho}",
+                        parent=dialog,
+                    )
+                    dialog.destroy()
+
+        ttk.Button(
+            botoes_frame,
+            text="Escolher Pasta Manualmente...",
+            style="Action.TButton",
+            command=escolher_caminho,
+        ).pack(side="left", padx=(0, 8), fill="x", expand=True)
+
+        if caminhos_detectados:
+            ttk.Button(
+                botoes_frame,
+                text="Usar Auto-Detectado",
+                style="Ghost.TButton",
+                command=usar_auto_detectado,
+            ).pack(side="left", fill="x", expand=True)
+
+        ttk.Button(
+            botoes_frame,
+            text="Cancelar",
+            style="Ghost.TButton",
+            command=dialog.destroy,
+        ).pack(side="right", padx=(8, 0))
 
 
 def run_desktop():

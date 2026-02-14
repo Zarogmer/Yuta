@@ -1,5 +1,6 @@
 from yuta_helpers import *
 from .email_rascunho import criar_rascunho_email_cliente
+from .criar_pasta import CriarPasta
 
 
 class FaturamentoSaoSebastiao:
@@ -606,9 +607,6 @@ class FaturamentoSaoSebastiao:
             "Horas Extras": self._somar_valor_item(r"Horas?\s+Extras?", paginas_validas=PAG_HE, pick="last"),
         }
 
-        for k, v in self.dados.items():
-            print(f"✔ {k}: {float(v or 0.0):.2f}")
-
 
 
 
@@ -902,6 +900,121 @@ class FaturamentoSaoSebastiao:
 
         except StopIteration:
             print("⚠️ Aba FRONT VIGIA não encontrada")
+
+    def atualizar_planilha_controle(self, wb):
+        """
+        Atualiza a planilha de controle com informações do faturamento VIGIA.
+        Preenche colunas B (data), C (serviço), D (ETA), E (ETB), F (cliente), G (navio), J (DN), K (MMO/COSTS).
+        """
+        try:
+            # Obter informações básicas
+            pasta = self.caminhos_pdfs[0].parent
+            navio = obter_nome_navio(pasta, None)
+            nd = obter_dn_da_pasta(pasta)
+            cliente = pasta.parent.name.strip()
+            
+            # Obter data atual
+            from datetime import datetime
+            data_hoje = datetime.now().strftime("%d/%m/%Y")
+            
+            # Obter datas do período extraído (já em formato dd/mm/yyyy)
+            try:
+                if len(self.caminhos_pdfs) >= 2:
+                    data_ini, data_fim = self.extrair_datas_mescladas()
+                else:
+                    data_ini, data_fim = self.extrair_periodo_por_data()
+                eta = data_ini
+                etb = data_fim
+            except Exception:
+                eta = ""
+                etb = ""
+            
+            # Buscar valor de COSTS no REPORT VIGIA
+            mmo = self._buscar_costs_report(wb)
+            
+            # Usar CriarPasta para gravar na planilha
+            criar_pasta = CriarPasta()
+            criar_pasta._gravar_planilha(
+                cliente=cliente,
+                navio=navio,
+                dn=nd,
+                servico="VIGIA",
+                data=data_hoje,
+                eta=eta if eta else "",
+                etb=etb if etb else "",
+                mmo=mmo
+            )
+            
+        except Exception as e:
+            print(f"⚠️ Erro ao atualizar planilha de controle: {e}")
+    
+    def _buscar_costs_report(self, wb):
+        """
+        Busca o valor de COSTS no REPORT VIGIA dinamicamente.
+        O valor do COSTS SEMPRE está na coluna G, independente de onde está a palavra 'COSTS'.
+        Retorna formato brasileiro sem R$: 16.227,85
+        """
+        import re
+        
+        try:
+            # Encontra aba REPORT VIGIA
+            ws_report = None
+            for sh in wb.sheets:
+                if sh.name.strip().upper() == "REPORT VIGIA":
+                    ws_report = sh
+                    break
+            
+            if not ws_report:
+                return ""
+            
+            # Procura em um range amplo (linhas 1 a 150, todas as colunas)
+            for linha in range(1, 151):
+                for col_letra in ['C', 'D', 'E', 'F', 'G', 'H']:
+                    try:
+                        valor_celula = ws_report.range(f"{col_letra}{linha}").value
+                        
+                        # Verifica se contém COSTS ou MMO
+                        if valor_celula and isinstance(valor_celula, str):
+                            texto_upper = valor_celula.upper().strip()
+                            
+                            if "COSTS" in texto_upper or "MMO" in texto_upper:
+                                # ✅ SEMPRE busca o valor na coluna G da MESMA linha
+                                try:
+                                    celula_g = ws_report.range(f"G{linha}")
+                                    
+                                    # Pega o TEXTO formatado (como aparece no Excel)
+                                    valor_texto = None
+                                    try:
+                                        valor_texto = celula_g.api.Text
+                                    except:
+                                        valor_texto = str(celula_g.value) if celula_g.value else None
+                                    
+                                    if valor_texto and valor_texto.strip():
+                                        # Remove formatação e converte
+                                        try:
+                                            valor_limpo = valor_texto.replace("R$", "").replace(" ", "").strip()
+                                            # Se já está no formato brasileiro (1.234,56), converte
+                                            if "," in valor_limpo:
+                                                valor_limpo = valor_limpo.replace(".", "").replace(",", ".")
+                                            valor_num = float(valor_limpo)
+                                            
+                                            # Retorna APENAS com vírgula decimal (sem ponto de milhar)
+                                            resultado = f"{valor_num:.2f}".replace(".", ",")
+                                            return resultado
+                                        except Exception as e:
+                                            # Se já estiver formatado, remove R$ e pontos
+                                            texto_limpo = valor_texto.replace("R$", "").replace(".", "").strip()
+                                            return texto_limpo
+                                except:
+                                    pass
+                    except:
+                        continue
+            
+            return ""
+            
+        except Exception as e:
+            print(f"❌ Erro ao buscar COSTS: {e}")
+            return ""
 
     # ==================================================
     # CREDIT NOTE
@@ -1354,6 +1467,7 @@ class FaturamentoSaoSebastiao:
 
             # FRONT
             self.preencher_front_vigia(wb)
+            # ⚠️ NÃO atualiza planilha de controle aqui (será feito após preview)
 
             # CREDIT NOTE
             self.escrever_cn_credit_note(wb, nd)
@@ -1376,17 +1490,23 @@ class FaturamentoSaoSebastiao:
                     "selection": {"pdfs": [str(p) for p in self.caminhos_pdfs]},
                 }
 
+            # ✅ ATUALIZAR PLANILHA DE CONTROLE (só na execução final)
+            self.atualizar_planilha_controle(wb)
+
             # ✅ SALVAR EXCEL (com wb aberto)
             caminho_excel = salvar_excel_com_nome(wb, pasta, nome_base)
             print(f"💾 Excel salvo em: {caminho_excel}")
 
+            # ✅ Verifica se é cliente WILLIAMS (apenas FRONT VIGIA no PDF)
+            apenas_front = "WILLIAMS" in cliente.upper()
+
             # ✅ GERAR PDF SEM REABRIR O EXCEL (evita erro COM)
             caminho_pdf = gerar_pdf_do_wb_aberto(
-                wb, pasta, nome_base, ignorar_abas=("NF",)
+                wb, pasta, nome_base, ignorar_abas=("NF",), apenas_front=apenas_front
             )
 
             nome_cliente = f"{cliente} - {porto}" if porto != "PADRAO" else cliente
-            anexos = [caminho_excel, caminho_pdf]
+            anexos = [caminho_pdf]  # ✅ Removido Excel dos anexos
             anexos.extend(self.caminhos_pdfs)
             try:
                 criar_rascunho_email_cliente(
