@@ -1,50 +1,32 @@
 # ==============================
 # IMPORTS
 # ==============================
-import sys
+import os
 import re
 import ssl
-import certifi
-import urllib.request
-import shutil
+import sys
 import tempfile
+import unicodedata
+import urllib.request
+
+import certifi
+import holidays
 import pdfplumber
-import os
-import msvcrt
-
+import pytesseract
+import xlwings as xw
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from itertools import cycle
-from datetime import datetime, date, timedelta, timezone
-
-import tkinter as tk
+import shutil
+from tempfile import gettempdir
 from tkinter import Tk, filedialog
 
-from config_manager import obter_caminho_base_faturamentos
-
-import pandas as pd
-import xlwings as xw
-import openpyxl
-from copy import copy  # para copiar estilos
-from openpyxl.styles import Font
-from tempfile import gettempdir
-import shutil
-import holidays
-from docx import Document
-from num2words import num2words
 import comtypes.client
-import unicodedata
-import locale
-import unicodedata
-
+import openpyxl
 from docx import Document
-from shutil import copy2
 from num2words import num2words
-from datetime import datetime
-import calendar
-
-
 from pdf2image import convert_from_path
-import pytesseract
+
+from config_manager import obter_caminho_base_faturamentos
 
 
 
@@ -71,9 +53,119 @@ for d in feriados_personalizados:
 # ---------------------------
 # 1️⃣ Copiar arquivo para pasta temporária e ler Excel
 # ---------------------------
+def _tentar_forcar_download_onedrive(caminho: Path) -> bool:
+    """
+    Tenta forçar o download de um arquivo OneDrive que pode estar apenas na nuvem.
+    Retorna True se conseguiu acessar o arquivo, False caso contrário.
+    """
+    try:
+        # Método 1: Tenta abrir para forçar download
+        print(f"   Tentando forçar download: {caminho.name}")
+        if caminho.exists():
+            with open(caminho, 'rb') as f:
+                f.read(1024)  # Lê 1KB para garantir
+            print(f"   ✅ Arquivo acessível")
+            return True
+        else:
+            # Método 2: Usa attrib do Windows para forçar download
+            print(f"   ⚠️ Arquivo não disponível localmente, tentando forçar download...")
+            import subprocess
+            try:
+                # Remove atributo P (pinned/unpinned) para forçar disponibilidade
+                subprocess.run(
+                    ['attrib', '-U', str(caminho)],
+                    capture_output=True,
+                    timeout=10,
+                    check=False
+                )
+                # Tenta acessar novamente
+                import time
+                time.sleep(1)
+                if caminho.exists():
+                    print(f"   ✅ Arquivo baixado com sucesso")
+                    return True
+            except Exception as e:
+                print(f"   ⚠️ Não foi possível forçar download: {e}")
+            
+            return False
+    except (FileNotFoundError, OSError) as e:
+        print(f"   ❌ Erro ao acessar: {e}")
+        return False
+
 def copiar_para_temp_xlwings(caminho_original: Path) -> Path:
+    # Primeiro, tenta forçar download se for OneDrive
+    if "OneDrive" in str(caminho_original) or "SANPORT" in str(caminho_original):
+        print(f"🔄 Verificando sincronização OneDrive...")
+        _tentar_forcar_download_onedrive(caminho_original)
+    
+    print(f"🔍 Procurando arquivo: {caminho_original.name}")
+    print(f"🔍 Caminho completo: {caminho_original}")
+    
     if not caminho_original.exists():
-        raise FileNotFoundError(f"Arquivo não encontrado: {caminho_original}")
+        # Tenta encontrar arquivo com nome similar (problema de codificação)
+        pasta_pai = caminho_original.parent
+        nome_procurado = caminho_original.name
+        stem_procurado = caminho_original.stem
+
+        def _norm_nome(s: str) -> str:
+            s = unicodedata.normalize("NFKD", str(s))
+            s = s.encode("ASCII", "ignore").decode("ASCII")
+            s = s.replace("_", " ").replace("-", " ")
+            s = re.sub(r"\s+", " ", s).strip().lower()
+            return s
+        
+        print(f"⚠️ Arquivo não encontrado com nome exato")
+        print(f"🔍 Arquivos .xlsx na pasta (como Python vê):")
+        
+        encontrado = None
+        candidatos_xlsx = []
+        if pasta_pai.exists():
+            for item in pasta_pai.iterdir():
+                if item.is_file() and item.suffix == '.xlsx':
+                    print(f"   - {item.name}")
+                    candidatos_xlsx.append(item)
+
+            # 1) Match exato por nome normalizado (mais seguro)
+            alvo_norm = _norm_nome(stem_procurado)
+            for item in candidatos_xlsx:
+                if _norm_nome(item.stem) == alvo_norm:
+                    encontrado = item
+                    break
+
+            # 2) Fallback: todos os tokens do alvo presentes no candidato
+            if not encontrado:
+                tokens_alvo = [t for t in alvo_norm.split(" ") if t]
+                candidatos_token = [
+                    item for item in candidatos_xlsx
+                    if all(t in _norm_nome(item.stem) for t in tokens_alvo)
+                ]
+                if candidatos_token:
+                    # escolhe o nome mais próximo em tamanho do solicitado
+                    encontrado = min(
+                        candidatos_token,
+                        key=lambda item: abs(len(_norm_nome(item.stem)) - len(alvo_norm))
+                    )
+
+            if encontrado:
+                print(f"   ✅ Arquivo correspondente encontrado: {encontrado.name}")
+        
+        if encontrado:
+            caminho_original = encontrado
+        elif not caminho_original.exists():
+            raise FileNotFoundError(
+                f"\n❌ Arquivo não encontrado: {nome_procurado}\n"
+                f"📂 Caminho: {caminho_original}\n\n"
+                "🔧 SOLUÇÃO:\n"
+                "   O arquivo está apenas na nuvem do OneDrive.\n"
+                "   Para resolver, faça um dos seguintes:\n\n"
+                "   1. Abra o arquivo no Excel (clique duas vezes)\n"
+                "   2. Aguarde o OneDrive baixar o arquivo\n"
+                "   3. Feche o Excel e execute o processo novamente\n\n"
+                "   OU\n\n"
+                "   1. Clique com botão direito no arquivo\n"
+                "   2. Selecione 'Sempre manter neste dispositivo'\n"
+                "   3. Execute o processo novamente\n"
+            )
 
     temp_dir = Path(tempfile.mkdtemp(prefix="faturamento_"))
     caminho_temp = temp_dir / caminho_original.name
@@ -105,15 +197,22 @@ def copiar_para_temp_word(caminho_original: Path) -> Path:
 # 2️⃣ Localizar pasta FATURAMENTOS automaticamente
 # ---------------------------
 def obter_pasta_faturamentos() -> Path:
-    """
+    r"""
     Localiza a pasta FATURAMENTOS usando o sistema de configuração.
-    Retorna a pasta base (ex: ...\Central de Documentos - 01. FATURAMENTOS)
+    Retorna a pasta com os modelos (ex: ...\Central de Documentos - 01. FATURAMENTOS\FATURAMENTOS)
     """
     print("\n=== BUSCANDO PASTA FATURAMENTOS AUTOMATICAMENTE ===")
 
     try:
         # Usa o sistema de configuração centralizado
-        caminho = obter_caminho_base_faturamentos()
+        caminho_base = obter_caminho_base_faturamentos()
+        # Os modelos ficam na subpasta FATURAMENTOS dentro da pasta base
+        caminho = caminho_base / "FATURAMENTOS"
+        
+        if not caminho.exists():
+            # Fallback: se não existir a subpasta, usa a pasta base
+            caminho = caminho_base
+            
         print(f"✅ Pasta FATURAMENTOS encontrada em:\n   {caminho}")
         return caminho
     except FileNotFoundError:
@@ -147,8 +246,9 @@ def abrir_workbooks_de_acordo(pasta_faturamentos: Path, pasta_navio: Path):
     pasta_cliente = pasta_navio.parent
     nome_cliente = pasta_cliente.name.strip()
 
-    # 🔍 Busca flexível do arquivo do cliente na subpasta FATURAMENTOS
-    caminho_cliente_rede = localizar_arquivo_cliente(pasta_faturamentos / "FATURAMENTOS", nome_cliente)
+    # 🔍 Busca flexível do arquivo do cliente na pasta de modelos
+    pasta_modelos = _resolver_pasta_modelos_faturamento(pasta_faturamentos)
+    caminho_cliente_rede = localizar_arquivo_cliente(pasta_modelos, nome_cliente)
 
     caminho_cliente_local = copiar_para_temp_xlwings(caminho_cliente_rede)
 
@@ -312,6 +412,20 @@ def localizar_arquivo_cliente(pasta_faturamentos: Path, nome_cliente: str) -> Pa
     )
 
 
+def _resolver_pasta_modelos_faturamento(pasta_faturamentos: Path) -> Path:
+    """
+    Garante o caminho correto da pasta onde ficam os modelos dos clientes.
+    """
+    if pasta_faturamentos.name.upper() == "FATURAMENTOS":
+        return pasta_faturamentos
+
+    subpasta = pasta_faturamentos / "FATURAMENTOS"
+    if subpasta.exists():
+        return subpasta
+
+    return pasta_faturamentos
+
+
 def abrir_workbooks(pasta_faturamentos: Path, caminho_navio_rede: Path | str | None = None):
     if not caminho_navio_rede:
         caminho_navio_rede = selecionar_arquivo_navio()
@@ -323,8 +437,9 @@ def abrir_workbooks(pasta_faturamentos: Path, caminho_navio_rede: Path | str | N
     pasta_cliente = pasta_navio.parent
     nome_cliente = pasta_cliente.name.strip()
 
-    # 🔍 Busca flexível do arquivo do cliente na subpasta FATURAMENTOS
-    caminho_cliente_rede = localizar_arquivo_cliente(pasta_faturamentos / "FATURAMENTOS", nome_cliente)
+    # 🔍 Busca flexível do arquivo do cliente na pasta de modelos
+    pasta_modelos = _resolver_pasta_modelos_faturamento(pasta_faturamentos)
+    caminho_cliente_rede = localizar_arquivo_cliente(pasta_modelos, nome_cliente)
 
     # 🔥 COPIA AMBOS PARA LOCAL
     caminho_navio_local = copiar_para_temp_xlwings(caminho_navio_rede)

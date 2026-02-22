@@ -1,8 +1,24 @@
-from yuta_helpers import *
-import pdfplumber
 import re
-from .email_rascunho import criar_rascunho_email_cliente
+import shutil
+import tempfile
+import unicodedata
+from datetime import date, datetime, timedelta
+from pathlib import Path
+
+import pdfplumber
+
+from yuta_helpers import (
+    abrir_workbooks,
+    copiar_para_temp_xlwings,
+    escrever_nf_faturamento_completo,
+    extrair_identidade_navio,
+    fechar_workbooks,
+    gerar_pdf_faturamento_completo,
+    obter_pasta_faturamentos,
+    openpyxl,
+)
 from .criar_pasta import CriarPasta
+from .email_rascunho import criar_rascunho_email_cliente
 
 
 class FaturamentoCompleto:
@@ -92,7 +108,7 @@ class FaturamentoCompleto:
             )
 
             # SALVAR EXCEL (local → rede)
-            temp_excel = Path(gettempdir()) / f"{nome_base}.xlsx"
+            temp_excel = Path(tempfile.gettempdir()) / f"{nome_base}.xlsx"
             if temp_excel.exists():
                 temp_excel.unlink()
 
@@ -284,7 +300,7 @@ class FaturamentoCompleto:
         return "\n".join(linhas)
 
     def _export_preview_pdf(self, nome_base):
-        caminho_pdf = Path(gettempdir()) / f"preview_{nome_base}.pdf"
+        caminho_pdf = Path(tempfile.gettempdir()) / f"preview_{nome_base}.pdf"
         if caminho_pdf.exists():
             caminho_pdf.unlink()
 
@@ -523,7 +539,6 @@ class FaturamentoCompleto:
             cliente = self.pasta_saida_final.parent.name.strip()
             
             # Obter data atual
-            from datetime import datetime
             data_hoje = datetime.now().strftime("%d/%m/%Y")
             
             # Obter datas diretamente do RESUMO (NAVIO) em formato date
@@ -536,18 +551,31 @@ class FaturamentoCompleto:
             # Buscar valor de COSTS no REPORT VIGIA
             mmo = self._buscar_costs_report()
             
-            # Usar CriarPasta para gravar na planilha
+            # ✅ Abrir workbook de controle uma única vez
             criar_pasta = CriarPasta()
-            criar_pasta._gravar_planilha(
-                cliente=cliente,
-                navio=self.nome_navio,
-                dn=self.dn,
-                servico="VIGIA",
-                data=data_hoje,
-                eta=eta,
-                etb=etb,
-                mmo=mmo
-            )
+            caminho_planilha = criar_pasta._encontrar_planilha()
+            wb_controle = openpyxl.load_workbook(caminho_planilha)
+            
+            try:
+                # Usar CriarPasta para gravar na planilha (reutilizando workbook)
+                criar_pasta._gravar_planilha(
+                    cliente=cliente,
+                    navio=self.nome_navio,
+                    dn=self.dn,
+                    servico="VIGIA",
+                    data=data_hoje,
+                    eta=eta,
+                    etb=etb,
+                    mmo=mmo,
+                    wb_externo=wb_controle
+                )
+                
+                # ✅ Salvar apenas uma vez
+                wb_controle.save(caminho_planilha)
+                print("✅ Planilha de controle atualizada")
+            finally:
+                # Fechar workbook
+                wb_controle.close()
             
         except Exception as e:
             print(f"⚠️ Erro ao atualizar planilha de controle: {e}")
@@ -1253,10 +1281,6 @@ class FaturamentoCompleto:
             if ws[f"{coluna}{linha}"].value not in (None, ""):
                 return linha
         return None
-
-
-
-    from pathlib import Path
 
     def encontrar_pasta_modelo(self, nome_cliente: str) -> Path:
         """

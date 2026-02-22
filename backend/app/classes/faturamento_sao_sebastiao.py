@@ -337,12 +337,73 @@ class FaturamentoSaoSebastiao:
         if not p_ini or not p_fim:
             raise RuntimeError(f"Período (horários) não encontrado. ini={p_ini} fim={p_fim}")
 
-        # validação
-        ordem = {"07x13", "13x19", "19x01", "01x07"}
-        if p_ini not in ordem or p_fim not in ordem:
+        p_ini_raw = self._normalizar_horario_texto(p_ini)
+        p_fim_raw = self._normalizar_horario_texto(p_fim)
+
+        p_ini_norm = self._bucket_horario_periodo(p_ini_raw)
+        p_fim_norm = self._bucket_horario_periodo(p_fim_raw)
+
+        if not p_ini_norm or not p_fim_norm:
             raise RuntimeError(f"Horários inválidos: ini={p_ini} fim={p_fim}")
 
-        return p_ini, p_fim
+        if p_ini_raw != p_ini_norm or p_fim_raw != p_fim_norm:
+            print(
+                f"⚠️ Horário atípico detectado "
+                f"({p_ini_raw} -> bucket {p_ini_norm}, {p_fim_raw} -> bucket {p_fim_norm})."
+            )
+
+        # Retorna horário REAL do OGMO; o bucket é usado só para cálculo interno
+        return p_ini_raw, p_fim_raw
+
+    def _normalizar_horario_texto(self, periodo: str | None) -> str | None:
+        if not periodo:
+            return None
+
+        s = str(periodo).strip().lower().replace(" ", "")
+        s = s.replace("h", "x").replace("×", "x").replace("-", "x").replace(":", "x")
+
+        m = re.match(r"^(\d{1,2})x(\d{1,2})$", s)
+        if not m:
+            return None
+
+        inicio = int(m.group(1)) % 24
+        fim = int(m.group(2)) % 24
+        return f"{inicio:02d}x{fim:02d}"
+
+    def _bucket_horario_periodo(self, periodo: str | None) -> str | None:
+        """
+        Converte horários para bucket padrão do report:
+        07x13, 13x19, 19x01, 01x07.
+        Ex.: 09x13 -> 07x13.
+        """
+        normalizado = self._normalizar_horario_texto(periodo)
+        if not normalizado:
+            return None
+
+        inicio = int(normalizado.split("x", 1)[0])
+        candidato = normalizado
+
+        ordem = {"07x13", "13x19", "19x01", "01x07"}
+        if candidato in ordem:
+            return candidato
+
+        # fallback por faixa da hora inicial
+        if 1 <= inicio < 7:
+            return "01x07"
+        if 7 <= inicio < 13:
+            return "07x13"
+        if 13 <= inicio < 19:
+            return "13x19"
+        return "19x01"
+
+    def _duracao_periodo_horas(self, periodo: str | None) -> float | None:
+        normalizado = self._normalizar_horario_texto(periodo)
+        if not normalizado:
+            return None
+        inicio, fim = [int(x) for x in normalizado.split("x", 1)]
+        if fim >= inicio:
+            return float(fim - inicio)
+        return float((24 - inicio) + fim)
 
     # ==================================================
     # PERÍODO MESCLADO N PDFs (primeiro que tem INI, último que tem FIM)
@@ -821,7 +882,7 @@ class FaturamentoSaoSebastiao:
         """
         if self._usa_layout_ss(cliente, porto):
             if cliente == "WILSON SONS":
-                modelo = "WILSON SONS - SÃO SEBASTIÃO.xlsx"
+                modelo = "WILSON SONS - SAO SEBASTIAO.xlsx"
             elif cliente == "SEA SIDE":
                 modelo = "SEA SIDE - PSS.xlsx"
             else:
@@ -832,7 +893,6 @@ class FaturamentoSaoSebastiao:
                 "colar_report": self.colar_report_layout_ss
             }
 
-        # Padrão (Aquarius e outros clientes São Sebastião)
         return {
             "modelo": f"{cliente}.xlsx",
             "colar_report": self.colar_report_padrao
@@ -932,18 +992,32 @@ class FaturamentoSaoSebastiao:
             # Buscar valor de COSTS no REPORT VIGIA
             mmo = self._buscar_costs_report(wb)
             
-            # Usar CriarPasta para gravar na planilha
+            # ✅ Abrir workbook de controle uma única vez
             criar_pasta = CriarPasta()
-            criar_pasta._gravar_planilha(
-                cliente=cliente,
-                navio=navio,
-                dn=nd,
-                servico="VIGIA",
-                data=data_hoje,
-                eta=eta if eta else "",
-                etb=etb if etb else "",
-                mmo=mmo
-            )
+            caminho_planilha = criar_pasta._encontrar_planilha()
+            from yuta_helpers import openpyxl
+            wb_controle = openpyxl.load_workbook(caminho_planilha)
+            
+            try:
+                # Usar CriarPasta para gravar na planilha (reutilizando workbook)
+                criar_pasta._gravar_planilha(
+                    cliente=cliente,
+                    navio=navio,
+                    dn=nd,
+                    servico="VIGIA",
+                    data=data_hoje,
+                    eta=eta if eta else "",
+                    etb=etb if etb else "",
+                    mmo=mmo,
+                    wb_externo=wb_controle
+                )
+                
+                # ✅ Salvar apenas uma vez
+                wb_controle.save(caminho_planilha)
+                print("✅ Planilha de controle atualizada")
+            finally:
+                # Fechar workbook
+                wb_controle.close()
             
         except Exception as e:
             print(f"⚠️ Erro ao atualizar planilha de controle: {e}")
@@ -1042,14 +1116,15 @@ class FaturamentoSaoSebastiao:
         dom_fer = self._is_domingo_ou_feriado(d)
         noite = self._is_noite_por_periodo(periodo)
 
-        # ✅ ATRACADO usa linha 9, FUNDEIO usa linha 16
+        # ✅ ATRACADO usa linha 9, FUNDEIO/AO_LARGO usam linha 16
         linha_ref = {
             "ATRACADO": 9,
             "FUNDEIO": 16,
+            "AO_LARGO": 16,
         }.get(status)
 
         if linha_ref is None:
-            return 0.0  # AO_LARGO ou desconhecido -> por enquanto não calcula
+            return 0.0
 
         # escolhe coluna base
         if not dom_fer and not noite:
@@ -1070,9 +1145,9 @@ class FaturamentoSaoSebastiao:
     def preencher_tarifa_por_linha(self, ws_report, linha_base: int, n: int, status: str, coluna_saida: str = "G"):
         """
         Lê data em C{linha} e período em E{linha}.
-        Se status == ATRACADO ou FUNDEIO: escreve tarifa na coluna_saida.
+        Se status == ATRACADO/FUNDEIO/AO_LARGO: escreve tarifa na coluna_saida.
         """
-        if status not in ("ATRACADO", "FUNDEIO"):
+        if status not in ("ATRACADO", "FUNDEIO", "AO_LARGO"):
             return
 
         for i in range(n):
@@ -1113,6 +1188,35 @@ class FaturamentoSaoSebastiao:
     def preencher_coluna_horarios(self, ws_report, horarios_ogmo: list[str], linha_inicial: int = 22):
         for i, horario in enumerate(horarios_ogmo):
             ws_report.range(f"E{linha_inicial + i}").value = horario
+
+    def _extrair_valores_reais_por_periodo_ogmo(self) -> dict[str, list[float]]:
+        """
+        Extrai valores monetários diretamente das linhas do OGMO que contenham horário.
+        Retorna mapa no formato: {"09x13": [valor1, valor2], "13x19": [valor]}
+        """
+        mapa: dict[str, list[float]] = {}
+        rx_h = re.compile(r"\b(\d{1,2})\s*[x×h\-:]\s*(\d{1,2})\b", re.I)
+        rx_v = re.compile(r"\d{1,3}(?:\.\d{3})*,\d{2}|\b\d+\.\d{2}\b(?!\.)")
+
+        for item in self.paginas_texto:
+            for linha in item["texto"].splitlines():
+                mh = rx_h.search(linha)
+                if not mh:
+                    continue
+
+                periodo = f"{int(mh.group(1)) % 24:02d}x{int(mh.group(2)) % 24:02d}"
+                valores = rx_v.findall(linha)
+                if not valores:
+                    continue
+
+                try:
+                    valor = self._br_or_us_to_float(valores[-1])
+                except Exception:
+                    continue
+
+                mapa.setdefault(periodo, []).append(float(valor))
+
+        return mapa
 
 
     # ==================================================
@@ -1163,6 +1267,27 @@ class FaturamentoSaoSebastiao:
         # ✅ preenche tarifa por linha usando C e E como base
         self.preencher_tarifa_por_linha(aba, linha_base, n, status=status, coluna_saida="G")
 
+        # ✅ sobrescreve com valor real do OGMO quando disponível (horário + valor na mesma linha)
+        mapa_valores_ogmo = self._extrair_valores_reais_por_periodo_ogmo()
+        if mapa_valores_ogmo:
+            sobrescritos = 0
+            for i in range(n):
+                linha = linha_base + i
+                periodo_linha = self._normalizar_horario_texto(aba.range(f"E{linha}").value)
+                if not periodo_linha:
+                    continue
+
+                lista = mapa_valores_ogmo.get(periodo_linha)
+                if not lista:
+                    continue
+
+                valor_real = lista.pop(0)
+                aba.range(f"G{linha}").value = float(valor_real)
+                sobrescritos += 1
+
+            if sobrescritos:
+                print(f"✔ {sobrescritos} valor(es) de período sobrescrito(s) com extração direta do OGMO.")
+
         print(f"✔ Colado {n} períodos + tarifa (status={status}) a partir de C{linha_base}/E{linha_base}")
 
 
@@ -1205,13 +1330,16 @@ class FaturamentoSaoSebastiao:
                     break
             return out
 
-        p_ini = norm_periodo(periodo_inicial)
-        p_fim = norm_periodo(periodo_final)
+        p_ini_real = norm_periodo(periodo_inicial)
+        p_fim_real = norm_periodo(periodo_final)
+
+        p_ini = self._bucket_horario_periodo(p_ini_real)
+        p_fim = self._bucket_horario_periodo(p_fim_real)
 
         if p_ini not in ordem:
-            raise ValueError(f"Período inicial inválido: {periodo_inicial!r} -> {p_ini!r}")
+            raise ValueError(f"Período inicial inválido: {periodo_inicial!r} -> {p_ini_real!r}")
         if p_fim not in ordem:
-            raise ValueError(f"Período final inválido: {periodo_final!r} -> {p_fim!r}")
+            raise ValueError(f"Período final inválido: {periodo_final!r} -> {p_fim_real!r}")
 
         d_ini = to_date(data_ini)
         d_fim = to_date(data_fim)
@@ -1235,6 +1363,13 @@ class FaturamentoSaoSebastiao:
 
             if len(out) > 400:
                 raise RuntimeError("Proteção: períodos demais gerados. Verifique datas/períodos extraídos.")
+
+        # preserva horários reais nas bordas quando forem atípicos
+        if out:
+            if p_ini_real:
+                out[0] = (out[0][0], p_ini_real)
+            if p_fim_real:
+                out[-1] = (out[-1][0], p_fim_real)
 
         return out
 
@@ -1391,10 +1526,10 @@ class FaturamentoSaoSebastiao:
     # 5) aplica tarifa linha a linha (baseado em C=data e E=periodo)
     # --------------------------------------------------
     def preencher_tarifa_por_linha(self, ws_report, linha_base: int, n: int, status: str, coluna_saida: str = "G"):
-        if status not in ("ATRACADO", "FUNDEIO"):
+        if status not in ("ATRACADO", "FUNDEIO", "AO_LARGO"):
             return
 
-        # ATRACADO usa linha 9, FUNDEIO usa linha 16
+        # ATRACADO usa linha 9, FUNDEIO/AO_LARGO usam linha 16
         linha_ref = 9 if status == "ATRACADO" else 16
 
         for i in range(n):
@@ -1407,8 +1542,12 @@ class FaturamentoSaoSebastiao:
             if not isinstance(d, date):
                 continue
 
+            p_bucket = self._bucket_horario_periodo(str(p or ""))
+            if not p_bucket:
+                continue
+
             dom_fer = self._is_domingo_ou_feriado(d)
-            noite = self._is_noite_por_periodo(str(p or ""))
+            noite = self._is_noite_por_periodo(p_bucket)
 
             if not dom_fer and not noite:
                 cell = f"N{linha_ref}"
@@ -1420,7 +1559,8 @@ class FaturamentoSaoSebastiao:
                 cell = f"Q{linha_ref}"
 
             val = ws_report.range(cell).value
-            ws_report.range(f"{coluna_saida}{linha}").value = float(val or 0.0)
+            tarifa_base = float(val or 0.0)
+            ws_report.range(f"{coluna_saida}{linha}").value = tarifa_base
 
 
         print("DEBUG status:", status)

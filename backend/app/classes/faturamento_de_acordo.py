@@ -1,4 +1,20 @@
-from yuta_helpers import *
+from pathlib import Path
+from tempfile import gettempdir
+
+from yuta_helpers import (
+    abrir_workbooks_de_acordo,
+    escrever_de_acordo_nf,
+    fechar_workbooks,
+    gerar_pdf,
+    montar_nome_faturamento,
+    obter_dn_da_pasta,
+    obter_nome_navio,
+    obter_pasta_faturamentos,
+    salvar_excel_com_nome,
+    selecionar_pasta_navio,
+)
+from yuta_helpers import datetime
+
 from .criar_pasta import CriarPasta
 from .email_rascunho import criar_rascunho_email_cliente
 
@@ -34,9 +50,7 @@ class FaturamentoDeAcordo:
         for extra in ("C27", "G27"):
             FaturamentoDeAcordo.limpar_celula_segura(ws_front, extra)
 
-
-
-        # =========================
+    # =========================
     # REGRAS POR CLIENTE
     # =========================
     REGRAS_CLIENTES = {
@@ -58,7 +72,6 @@ class FaturamentoDeAcordo:
             "H29": None,
         },
     }
-
 
     # =========================
     # APLICA REGRAS
@@ -134,7 +147,7 @@ class FaturamentoDeAcordo:
                 }
 
             # ✅ ATUALIZAR PLANILHA DE CONTROLE (só na execução final)
-            self._atualizar_planilha_controle(pasta_navio, nome_navio, dn, data_extenso)
+            self._atualizar_planilha_controle(pasta_navio, nome_navio, dn, data_extenso, ws_front)
 
             # ✅ SALVAR EXCEL (ainda dentro do try, com wb aberto)
             caminho_excel = salvar_excel_com_nome(
@@ -169,10 +182,10 @@ class FaturamentoDeAcordo:
         finally:
             fechar_workbooks(app=app, wb_cliente=wb)
 
-    def _atualizar_planilha_controle(self, pasta_navio: Path, nome_navio: str, dn: str, data_extenso: str):
+    def _atualizar_planilha_controle(self, pasta_navio: Path, nome_navio: str, dn: str, data_extenso: str, ws_front):
         """
         Atualiza a planilha de controle com informações do DE ACORDO.
-        Preenche colunas B (data), C (serviço), D (ETA), E (ETB), F (cliente), G (navio), J (DN), K (MMO).
+        Preenche colunas B (data), C (serviço), D (ETA), E (ETB), F (cliente), G (navio), J (DN), K (valor total), O (ISS).
         """
         try:
             cliente = pasta_navio.parent.name.strip()
@@ -181,21 +194,50 @@ class FaturamentoDeAcordo:
             from datetime import datetime
             data_hoje = datetime.now().strftime("%d/%m/%Y")
             
-            # Para DE ACORDO, D16 e D17 são iguais (mesma data) - usar formato dd/mm/yyyy
-            # Usar CriarPasta para gravar na planilha
-            criar_pasta = CriarPasta()
-            criar_pasta._gravar_planilha(
-                cliente=cliente,
-                navio=nome_navio,
-                dn=dn,
-                servico="DE ACORDO",
-                data=data_hoje,
-                eta=data_hoje,  # Mesmo dia
-                etb=data_hoje,  # Mesmo dia
-                mmo=""  # DE ACORDO não tem COSTS/MMO
-            )
+            # ✅ Ler valores da FRONT VIGIA
+            # Tenta E36 primeiro (Delta), depois E37 (Unimar)
+            valor_total = ws_front.range("E36").value
+            celula_usada = "E36"
             
-            print("✅ Planilha de controle atualizada com sucesso!")
+            if valor_total is None:
+                valor_total = ws_front.range("E37").value
+                celula_usada = "E37"
+            
+            print(f"📊 Lendo valores da FRONT VIGIA:")
+            print(f"   {celula_usada} (Valor Total): {valor_total} (tipo: {type(valor_total)})")
+            
+            if valor_total is None:
+                print(f"⚠️ AVISO: E36 e E37 estão vazios! Verifique a planilha FRONT VIGIA.")
+            
+            # ✅ Abrir workbook de controle uma única vez
+            criar_pasta = CriarPasta()
+            caminho_planilha = criar_pasta._encontrar_planilha()
+            from yuta_helpers import openpyxl
+            wb_controle = openpyxl.load_workbook(caminho_planilha)
+            
+            try:
+                # Para DE ACORDO, D16 e D17 são iguais (mesma data) - usar formato dd/mm/yyyy
+                # Usar CriarPasta para gravar na planilha (reutilizando workbook)
+                criar_pasta._gravar_planilha(
+                    cliente=cliente,
+                    navio=nome_navio,
+                    dn=dn,
+                    servico="DE ACORDO",
+                    data=data_hoje,
+                    eta=data_hoje,  # Mesmo dia
+                    etb=data_hoje,  # Mesmo dia
+                    mmo=valor_total,  # Valor total de E37 vai para coluna K
+                    wb_externo=wb_controle,
+                    iss_formula=True,  # Cria fórmula =K{linha}*5% na coluna O
+                    limpar_formulas_adm_cliente=True  # Limpa colunas N e P (ADM % e CLIENTE %)
+                )
+                
+                # ✅ Salvar apenas uma vez
+                wb_controle.save(caminho_planilha)
+                print("✅ Planilha de controle atualizada com sucesso!")
+            finally:
+                # Fechar workbook
+                wb_controle.close()
             
         except Exception as e:
             print(f"⚠️ Erro ao atualizar planilha de controle: {e}")

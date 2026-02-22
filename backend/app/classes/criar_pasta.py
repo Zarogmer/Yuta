@@ -7,6 +7,15 @@ from config_manager import obter_caminho_base_faturamentos
 
 
 class CriarPasta:
+    # Cache de clientes para otimização (evita múltiplas varreduras na rede)
+    _cache_clientes = None
+    _cache_timestamp = None
+    _cache_ttl = 300  # 5 minutos
+    
+    # Cache para próximo DN
+    _cache_proximo_dn = None
+    _cache_dn_timestamp = None
+    
     def __init__(self, planilha_nome="CONTROLE DE FATURAMENTO 2026"):
         self.planilha_nome = planilha_nome
 
@@ -104,19 +113,62 @@ class CriarPasta:
         texto = re.sub(r"[^A-Z0-9]+", "", texto)
         return texto
 
-    def listar_clientes(self):
+    def listar_clientes(self, forcar_refresh=False):
+        """
+        Lista clientes disponíveis com cache para otimizar acesso à rede.
+        
+        Args:
+            forcar_refresh: Se True, ignora cache e busca novamente
+        """
+        import time
+        
+        # Verifica se tem cache válido
+        if not forcar_refresh and self._cache_clientes is not None and self._cache_timestamp is not None:
+            tempo_decorrido = time.time() - self._cache_timestamp
+            if tempo_decorrido < self._cache_ttl:
+                return self._cache_clientes
+        
+        # Cache expirado ou refresh forçado: busca novamente
         base = self._obter_base_clientes()
         clientes = []
-        for item in base.iterdir():
-            if not item.is_dir():
-                continue
-            if item.name.upper() == "FATURAMENTOS":
-                continue
-            clientes.append(item.name)
-        return sorted(clientes, key=lambda v: v.casefold())
+        
+        try:
+            for item in base.iterdir():
+                if not item.is_dir():
+                    continue
+                if item.name.upper() == "FATURAMENTOS":
+                    continue
+                clientes.append(item.name)
+        except Exception as e:
+            # Se falhar (rede indisponível, etc), retorna cache antigo se existir
+            if self._cache_clientes is not None:
+                return self._cache_clientes
+            raise
+        
+        resultado = sorted(clientes, key=lambda v: v.casefold())
+        
+        # Atualiza cache
+        CriarPasta._cache_clientes = resultado
+        CriarPasta._cache_timestamp = time.time()
+        
+        return resultado
     
-    def obter_proximo_dn(self) -> str:
-        """Obtém o próximo DN da sequência (último DN + 1)"""
+    def obter_proximo_dn(self, forcar_refresh=False) -> str:
+        """
+        Obtém o próximo DN da sequência (último DN + 1)
+        Com cache para evitar abrir planilha toda vez.
+        
+        Args:
+            forcar_refresh: Se True, ignora cache e busca novamente
+        """
+        import time
+        
+        # Verifica cache válido
+        if not forcar_refresh and self._cache_proximo_dn is not None and self._cache_dn_timestamp is not None:
+            tempo_decorrido = time.time() - self._cache_dn_timestamp
+            if tempo_decorrido < self._cache_ttl:
+                return self._cache_proximo_dn
+        
         try:
             caminho_planilha = self._encontrar_planilha()
             wb = openpyxl.load_workbook(caminho_planilha, data_only=True)
@@ -126,36 +178,45 @@ class CriarPasta:
             ultima_linha = self._ultima_linha_com_dados(ws, ["J"])
             
             if ultima_linha < 2:  # Se não há dados, começa do 1
-                return "001/26"
-            
-            # Pega o valor da última célula
-            ultimo_dn = ws[f"J{ultima_linha}"].value
-            
-            if not ultimo_dn:
-                return "001/26"
-            
-            # Extrai o número (ex: "123/26" -> "123" ou 123 -> 123)
-            if isinstance(ultimo_dn, (int, float)):
-                numero = int(ultimo_dn)
+                resultado = "001/26"
             else:
-                # Remove tudo depois da barra
-                numero_str = str(ultimo_dn).split("/")[0].strip()
-                # Remove caracteres não numéricos
-                import re
-                numeros = re.findall(r'\d+', numero_str)
-                numero = int(numeros[0]) if numeros else 0
+                # Pega o valor da última célula
+                ultimo_dn = ws[f"J{ultima_linha}"].value
+                
+                if not ultimo_dn:
+                    resultado = "001/26"
+                else:
+                    # Extrai o número (ex: "123/26" -> "123" ou 123 -> 123)
+                    if isinstance(ultimo_dn, (int, float)):
+                        numero = int(ultimo_dn)
+                    else:
+                        # Remove tudo depois da barra
+                        numero_str = str(ultimo_dn).split("/")[0].strip()
+                        # Remove caracteres não numéricos
+                        import re
+                        numeros = re.findall(r'\d+', numero_str)
+                        numero = int(numeros[0]) if numeros else 0
+                    
+                    # Incrementa
+                    proximo = numero + 1
+                    
+                    # Formata com zero padding e ano atual (2026)
+                    resultado = f"{str(proximo).zfill(3)}/26"
             
-            # Incrementa
-            proximo = numero + 1
+            # Atualiza cache
+            CriarPasta._cache_proximo_dn = resultado
+            CriarPasta._cache_dn_timestamp = time.time()
             
-            # Formata com zero padding e ano atual (2026)
-            return f"{str(proximo).zfill(3)}/26"
+            return resultado
             
         except FileNotFoundError:
             # Se a planilha não existe, começa do 1
             return "001/26"
         except Exception as e:
             print(f"⚠️ Erro ao obter próximo DN: {e}")
+            # Se falhar mas tem cache, usa cache antigo
+            if self._cache_proximo_dn is not None:
+                return self._cache_proximo_dn
             return "001/26"  # Fallback
 
     def _resolver_pasta_cliente(self, pasta_base: Path, cliente: str) -> Path | None:
@@ -240,7 +301,7 @@ class CriarPasta:
             return f"{texto}/26"
         return texto
 
-    def _gravar_planilha(self, cliente: str, navio: str, dn: str, servico: str = None, data: str = None, eta: str = None, etb: str = None, mmo: str = None):
+    def _gravar_planilha(self, cliente: str, navio: str, dn: str, servico: str = None, data: str = None, eta: str = None, etb: str = None, mmo: str = None, wb_externo=None, iss: str = None, limpar_formulas_adm_cliente: bool = False, iss_formula: bool = False):
         """
         Grava informações na planilha de controle.
         
@@ -253,9 +314,21 @@ class CriarPasta:
             eta: Data inicial - D16 da FRONT VIGIA (coluna D)
             etb: Data final - D17 da FRONT VIGIA (coluna E)
             mmo: Valor de COSTS do REPORT VIGIA (coluna K)
+            wb_externo: Workbook openpyxl já aberto (opcional, evita reabrir)
+            iss: Valor do ISS (coluna O)
+            limpar_formulas_adm_cliente: Se True, limpa fórmulas das colunas N (ADM %) e P (CLIENTE %)
+            iss_formula: Se True, cria fórmula =K{linha}*5% na coluna O ao invés de valor fixo
         """
         caminho_planilha = self._encontrar_planilha()
-        wb = openpyxl.load_workbook(caminho_planilha)
+        
+        # ✅ Reutiliza workbook se fornecido
+        if wb_externo is not None:
+            wb = wb_externo
+            deve_fechar = False
+        else:
+            wb = openpyxl.load_workbook(caminho_planilha)
+            deve_fechar = True
+        
         ws = wb.active
 
         dn_padronizado = self._padronizar_dn(dn)
@@ -274,6 +347,7 @@ class CriarPasta:
         # Se não encontrou, cria nova linha
         if linha is None:
             linha = ultima_linha + 1
+            print(f"📝 Criando nova linha {linha} na planilha de controle")
             # Apenas na CRIAÇÃO, preenche cliente/navio/DN
             ws[f"F{linha}"].value = cliente
             ws[f"G{linha}"].value = navio
@@ -293,6 +367,8 @@ class CriarPasta:
             # Se encontrou um número, incrementa; senão começa do 7986
             proximo_nf = (ultimo_nf + 1) if ultimo_nf else 7986
             ws[f"M{linha}"].value = proximo_nf
+        else:
+            print(f"📝 Atualizando linha {linha} existente (DN: {dn_padronizado})")
 
         # Atualiza APENAS os campos fornecidos (não sobrescreve vazios)
         if data:
@@ -327,7 +403,7 @@ class CriarPasta:
             ws[f"D{linha}"].value = eta
         if etb:
             ws[f"E{linha}"].value = etb
-        if mmo:
+        if mmo is not None:
             # MMO: converter para número e formatar como moeda
             celula_mmo = ws[f"K{linha}"]
             try:
@@ -340,11 +416,44 @@ class CriarPasta:
                 
                 # Formato de moeda brasileiro com R$
                 celula_mmo.number_format = '"R$ "#,##0.00'
-            except:
+                print(f"✓ MMO gravado na coluna K, linha {linha}: {valor_numero}")
+            except Exception as e:
                 # Se falhar, grava como texto mesmo
                 celula_mmo.value = str(mmo)
+                print(f"⚠️ MMO gravado como texto: {mmo} (erro: {e})")
+        
+        if iss:
+            # ISS: converter para número e formatar como moeda (coluna O)
+            celula_iss = ws[f"O{linha}"]
+            try:
+                # Remove formatação e converte para float
+                valor_limpo = str(iss).replace(".", "").replace(",", ".").strip()
+                valor_numero = float(valor_limpo)
+                
+                # Grava como NÚMERO (não texto)
+                celula_iss.value = valor_numero
+                
+                # Formato de moeda brasileiro com R$
+                celula_iss.number_format = '"R$ "#,##0.00'
+            except:
+                # Se falhar, grava como texto mesmo
+                celula_iss.value = str(iss)
+        elif iss_formula:
+            # Cria fórmula =K{linha}*5% na coluna O (para DE ACORDO)
+            celula_iss = ws[f"O{linha}"]
+            celula_iss.value = f"=K{linha}*5%"
+            celula_iss.number_format = '"R$ "#,##0.00'
+            print(f"✓ Fórmula ISS criada na coluna O, linha {linha}: =K{linha}*5%")
+        
+        # Limpar fórmulas das colunas N (ADM %) e P (CLIENTE %) para DE ACORDO
+        if limpar_formulas_adm_cliente:
+            ws[f"N{linha}"].value = None  # Limpa ADM %
+            ws[f"P{linha}"].value = None  # Limpa CLIENTE %
+            print(f"✓ Colunas N e P limpas (linha {linha})")
 
-        wb.save(caminho_planilha)
+        # ✅ Só salva se abriu internamente (workbook externo é responsabilidade de quem passou)
+        if deve_fechar:
+            wb.save(caminho_planilha)
 
     def executar(
         self,
@@ -358,6 +467,7 @@ class CriarPasta:
         eta: str = None,
         etb: str = None,
         mmo: str = None,
+        wb_externo=None,
     ):
         def log(msg, tag="info"):
             if log_callback:
@@ -369,13 +479,6 @@ class CriarPasta:
             log(f"📋 Cliente: {cliente}")
             log(f"🚢 Navio: {navio}")
             log(f"📝 DN: {dn}")
-            
-            # Tenta gravar na planilha (opcional)
-            try:
-                self._gravar_planilha(cliente, navio, dn, servico, data, eta, etb, mmo)
-                log(f"✓ Registrado na planilha de controle")
-            except Exception as e:
-                log(f"⚠️ Planilha não atualizada: {e}", tag="warn")
             
             numero = self._formatar_numero(dn)
         else:

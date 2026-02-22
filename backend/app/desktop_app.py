@@ -1,27 +1,56 @@
+"""
+Desktop Yuta – Central de Processos.
+Interface Tkinter para faturamentos, ponto, relatórios e configurações.
+"""
 import queue
 import threading
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
 from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
 
 from pdf2image import convert_from_path
 from PIL import Image, ImageTk
 
 from classes import (
-    FaturamentoCompleto,
+    CriarPasta,
     FaturamentoAtipico,
+    FaturamentoCompleto,
     FaturamentoDeAcordo,
     FaturamentoSaoSebastiao,
     GerarRelatorio,
     ProgramaCopiarPeriodo,
     ProgramaRemoverPeriodo,
-    CriarPasta,
 )
 from config_manager import (
-    obter_caminho_configurado,
     configurar_caminho_base,
     listar_caminhos_detectados,
+    obter_caminho_configurado,
 )
+
+# ---- Tema (cores e fontes) ----
+THEME = {
+    "bg_root": "#0b1220",
+    "bg_surface": "#0f172a",
+    "bg_card": "#0f172a",
+    "bg_button": "#111827",
+    "bg_button_hover": "#1f2937",
+    "bg_disabled": "#0b1220",
+    "fg_primary": "#e5e7eb",
+    "fg_secondary": "#94a3b8",
+    "fg_section": "#cbd5e1",
+    "fg_status": "#cbd5e1",
+    "fg_disabled": "#64748b",
+    "accent_ok": "#34d399",
+    "accent_err": "#fb7185",
+    "accent_warn": "#fbbf24",
+    "separator": "#111827",
+    "font_header": ("Segoe UI", 18, "bold"),
+    "font_sub": ("Segoe UI", 10),
+    "font_section": ("Segoe UI", 11, "bold"),
+    "font_button": ("Segoe UI", 10, "bold"),
+    "font_ghost": ("Segoe UI", 9),
+    "font_log": ("Consolas", 10),
+}
 
 
 class DesktopApp(tk.Tk):
@@ -53,69 +82,60 @@ class DesktopApp(tk.Tk):
     # UI / Style
     # ---------------------------
     def _build_style(self):
+        t = THEME
         style = ttk.Style(self)
         style.theme_use("clam")
 
-        # Base
-        self.configure(bg="#0b1220")
-
-        style.configure("App.TFrame", background="#0b1220")
-        style.configure("Surface.TFrame", background="#0f172a")
-        style.configure("Card.TFrame", background="#0f172a")
+        self.configure(bg=t["bg_root"])
+        style.configure("App.TFrame", background=t["bg_root"])
+        style.configure("Surface.TFrame", background=t["bg_surface"])
+        style.configure("Card.TFrame", background=t["bg_card"])
 
         style.configure(
             "Header.TLabel",
-            background="#0b1220",
-            foreground="#e5e7eb",
-            font=("Segoe UI", 18, "bold"),
+            background=t["bg_root"],
+            foreground=t["fg_primary"],
+            font=t["font_header"],
         )
         style.configure(
             "Sub.TLabel",
-            background="#0b1220",
-            foreground="#94a3b8",
-            font=("Segoe UI", 10),
+            background=t["bg_root"],
+            foreground=t["fg_secondary"],
+            font=t["font_sub"],
         )
-
         style.configure(
             "Section.TLabel",
-            background="#0f172a",
-            foreground="#cbd5e1",
-            font=("Segoe UI", 11, "bold"),
+            background=t["bg_surface"],
+            foreground=t["fg_section"],
+            font=t["font_section"],
         )
-
         style.configure(
             "Action.TButton",
-            font=("Segoe UI", 10, "bold"),
+            font=t["font_button"],
             padding=(12, 10),
-            background="#111827",
-            foreground="#e5e7eb",
+            background=t["bg_button"],
+            foreground=t["fg_primary"],
         )
         style.map(
             "Action.TButton",
-            background=[("active", "#1f2937"), ("disabled", "#0b1220")],
-            foreground=[("disabled", "#64748b")],
+            background=[("active", t["bg_button_hover"]), ("disabled", t["bg_disabled"])],
+            foreground=[("disabled", t["fg_disabled"])],
         )
-
         style.configure(
             "Ghost.TButton",
-            font=("Segoe UI", 9),
+            font=t["font_ghost"],
             padding=(10, 8),
-            background="#0f172a",
-            foreground="#cbd5e1",
+            background=t["bg_surface"],
+            foreground=t["fg_section"],
         )
-        style.map("Ghost.TButton", background=[("active", "#111827")])
-
+        style.map("Ghost.TButton", background=[("active", t["bg_button"])])
         style.configure(
             "Status.TLabel",
-            background="#0f172a",
-            foreground="#cbd5e1",
-            font=("Segoe UI", 10),
+            background=t["bg_surface"],
+            foreground=t["fg_status"],
+            font=t["font_sub"],
         )
-
-        style.configure(
-            "Thin.TSeparator",
-            background="#111827",
-        )
+        style.configure("Thin.TSeparator", background=t["separator"])
 
     def _build_layout(self):
         root = ttk.Frame(self, style="App.TFrame")
@@ -203,11 +223,11 @@ class DesktopApp(tk.Tk):
         self._log_text = tk.Text(
             log_tab,
             wrap="word",
-            bg="#0b1220",
-            fg="#e5e7eb",
-            insertbackground="#e5e7eb",
+            bg=THEME["bg_root"],
+            fg=THEME["fg_primary"],
+            insertbackground=THEME["fg_primary"],
             relief="flat",
-            font=("Consolas", 10),
+            font=THEME["font_log"],
             height=18,
         )
         self._log_text.pack(side="left", fill="both", expand=True)
@@ -269,7 +289,7 @@ class DesktopApp(tk.Tk):
 
         self._preview_canvas = tk.Canvas(
             preview_wrap,
-            bg="#0b1220",
+            bg=THEME["bg_root"],
             highlightthickness=0,
         )
         self._preview_canvas.pack(side="left", fill="both", expand=True)
@@ -285,12 +305,8 @@ class DesktopApp(tk.Tk):
         self._preview_canvas.configure(yscrollcommand=preview_scroll.set)
 
         self._preview_placeholder = self._preview_canvas.create_text(
-            8,
-            8,
-            anchor="nw",
-            text="Sem pre-visualizacao",
-            fill="#94a3b8",
-            font=("Segoe UI", 10),
+            8, 8, anchor="nw", text="Sem pre-visualizacao",
+            fill=THEME["fg_secondary"], font=THEME["font_sub"],
         )
 
         # Status bar bottom (progress)
@@ -301,11 +317,11 @@ class DesktopApp(tk.Tk):
         self._progress.pack(fill="x")
 
     def _configure_tags(self):
-        # tags no Text para colorir
-        self._log_text.tag_configure("info", foreground="#cbd5e1")
-        self._log_text.tag_configure("ok", foreground="#34d399")     # verde
-        self._log_text.tag_configure("err", foreground="#fb7185")    # vermelho
-        self._log_text.tag_configure("warn", foreground="#fbbf24")   # amarelo
+        t = THEME
+        self._log_text.tag_configure("info", foreground=t["fg_section"])
+        self._log_text.tag_configure("ok", foreground=t["accent_ok"])
+        self._log_text.tag_configure("err", foreground=t["accent_err"])
+        self._log_text.tag_configure("warn", foreground=t["accent_warn"])
 
     # ---------------------------
     # Actions
@@ -395,7 +411,7 @@ class DesktopApp(tk.Tk):
     def _pedir_dados_criar_pasta(self):
         dialog = tk.Toplevel(self)
         dialog.title("Criar Pasta")
-        dialog.configure(bg="#0b1220")
+        dialog.configure(bg=THEME["bg_root"])
         dialog.resizable(False, False)
         dialog.grab_set()
 
@@ -404,45 +420,71 @@ class DesktopApp(tk.Tk):
 
         # Cliente
         ttk.Label(frame, text="Cliente", style="Section.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 4))
-        cp = CriarPasta()
-        clientes = cp.listar_clientes()
-        combo_state = "readonly" if clientes else "normal"
-        cliente_var = tk.StringVar(value=clientes[0] if clientes else "")
-        cliente_cb = ttk.Combobox(frame, values=clientes, textvariable=cliente_var, state=combo_state, width=38)
+        
+        # Combobox editável desde o início (permite digitação imediata)
+        cliente_var = tk.StringVar()
+        cliente_cb = ttk.Combobox(frame, textvariable=cliente_var, state="normal", width=38)
         cliente_cb.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        
+        # Label de status para indicar carregamento
+        status_label = ttk.Label(frame, text="Carregando clientes...", style="Sub.TLabel")
+        status_label.grid(row=2, column=0, sticky="w", pady=(0, 4))
+        
+        # Carrega clientes em background
+        cp = CriarPasta()
+        def carregar_clientes_bg():
+            try:
+                clientes = cp.listar_clientes()
+                # Atualiza o combobox na thread principal
+                dialog.after(0, lambda: _atualizar_combo(clientes))
+            except Exception as e:
+                dialog.after(0, lambda: status_label.configure(text=f"⚠️ Erro ao listar: {e}"))
+        
+        def _atualizar_combo(clientes):
+            cliente_cb['values'] = clientes
+            if clientes:
+                status_label.configure(text=f"✓ {len(clientes)} clientes encontrados")
+            else:
+                status_label.configure(text="Nenhum cliente encontrado")
+        
+        # Inicia carregamento em thread separada
+        threading.Thread(target=carregar_clientes_bg, daemon=True).start()
 
         # Nome do navio
-        ttk.Label(frame, text="Nome do navio", style="Section.TLabel").grid(row=2, column=0, sticky="w", pady=(0, 4))
+        ttk.Label(frame, text="Nome do navio", style="Section.TLabel").grid(row=3, column=0, sticky="w", pady=(0, 4))
         navio_var = tk.StringVar()
         navio_entry = ttk.Entry(frame, textvariable=navio_var, width=40)
-        navio_entry.grid(row=3, column=0, sticky="ew", pady=(0, 10))
+        navio_entry.grid(row=4, column=0, sticky="ew", pady=(0, 10))
 
-        # DN automático (apenas exibição)
+        # DN (editável, com sugestão automática)
+        ttk.Label(frame, text="DN (sugestão automática, editável)", style="Section.TLabel").grid(row=5, column=0, sticky="w", pady=(0, 4))
         proximo_dn = cp.obter_proximo_dn()
-        ttk.Label(frame, text="DN (automático)", style="Section.TLabel").grid(row=4, column=0, sticky="w", pady=(0, 4))
-        dn_label = ttk.Label(frame, text=proximo_dn, foreground="#94a3b8", background="#0f172a", font=("Segoe UI", 11, "bold"))
-        dn_label.grid(row=5, column=0, sticky="w", pady=(0, 12))
+        dn_var = tk.StringVar(value=proximo_dn)
+        dn_entry = ttk.Entry(frame, textvariable=dn_var, width=40)
+        dn_entry.grid(row=6, column=0, sticky="ew", pady=(0, 12))
 
         buttons = ttk.Frame(frame, style="Card.TFrame")
-        buttons.grid(row=6, column=0, sticky="e")
+        buttons.grid(row=7, column=0, sticky="e")
 
         resultado = {"valor": None}
 
         def on_ok():
             cliente = cliente_var.get().strip()
             navio = navio_var.get().strip()
+            dn = dn_var.get().strip()
 
-            if not cliente or not navio:
-                messagebox.showwarning("Dados incompletos", "Preencha cliente e navio.")
+            if not cliente or not navio or not dn:
+                messagebox.showwarning("Dados incompletos", "Preencha cliente, navio e DN.")
                 return
 
-            # DN é obtido automaticamente
-            dn = cp.obter_proximo_dn()
             resultado["valor"] = (cliente, navio, dn)
             dialog.destroy()
 
         def on_cancel():
             dialog.destroy()
+
+        # Bind da tecla Enter para acionar OK
+        dialog.bind('<Return>', lambda event: on_ok())
 
         ttk.Button(buttons, text="Cancelar", style="Ghost.TButton", command=on_cancel).pack(side="right", padx=(8, 0))
         ttk.Button(buttons, text="OK", style="Action.TButton", command=on_ok).pack(side="right")
@@ -716,7 +758,7 @@ class DesktopApp(tk.Tk):
         """Abre diálogo para configurar o caminho base de faturamentos"""
         dialog = tk.Toplevel(self)
         dialog.title("Configurações")
-        dialog.configure(bg="#0b1220")
+        dialog.configure(bg=THEME["bg_root"])
         dialog.resizable(False, False)
         dialog.grab_set()
 
@@ -738,9 +780,9 @@ class DesktopApp(tk.Tk):
                 height=2,
                 width=60,
                 wrap="word",
-                bg="#0b1220",
-                fg="#94a3b8",
-                font=("Segoe UI", 9),
+                bg=THEME["bg_root"],
+                fg=THEME["fg_secondary"],
+                font=THEME["font_sub"],
                 relief="flat",
             )
             caminho_label.insert("1.0", caminho_atual)

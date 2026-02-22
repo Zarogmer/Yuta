@@ -7,7 +7,6 @@ from classes import (
     ProgramaRemoverPeriodo,
     FaturamentoSaoSebastiao,
     GerarRelatorio,
-    CentralSanport,
     CriarPasta,
 )
 from desktop_app import run_desktop
@@ -20,7 +19,6 @@ __all__ = [
     "ProgramaRemoverPeriodo",
     "FaturamentoSaoSebastiao",
     "GerarRelatorio",
-    "CentralSanport",
     "CriarPasta",
 ]
 
