@@ -8,6 +8,7 @@ from yuta_helpers import fechar_workbooks, feriados_br, selecionar_arquivo_navio
 class ProgramaRemoverPeriodo:
     def __init__(self, debug=False):
         self.debug = debug
+        self.caminho_navio = None
         self.app = None
         self.wb = None
         self.wb_navio = None
@@ -27,10 +28,12 @@ class ProgramaRemoverPeriodo:
     # Abrir arquivo NAVIO
     # ---------------------------
 
-    def abrir_arquivo_navio(self):
-        caminho = selecionar_arquivo_navio()
+    def abrir_arquivo_navio(self, caminho=None):
+        caminho = caminho or self.caminho_navio or selecionar_arquivo_navio()
         if not caminho:
             return
+
+        self.caminho_navio = caminho
 
         self.app = xw.App(visible=False, add_book=False)
         self.wb_navio = self.app.books.open(caminho)
@@ -232,14 +235,29 @@ class ProgramaRemoverPeriodo:
     # Execução
     # ---------------------------
 
-    def executar(self, usar_arquivo_aberto=False):
+    def executar(self, usar_arquivo_aberto=False, selection=None):
         try:
+            selection = selection or {}
+            data_selecionada = selection.get("data")
+            periodo_selecionado = selection.get("periodo")
+            caminho_navio = selection.get("caminho_navio")
+
             if not usar_arquivo_aberto or not self.ws:
-                self.abrir_arquivo_navio()
+                self.abrir_arquivo_navio(caminho=caminho_navio)
+
+            if not self.ws:
+                return
 
             self.carregar_datas()
-            data = self.escolher_data()
-            periodo = self.escolher_periodo()
+
+            data = data_selecionada if data_selecionada else self.escolher_data()
+            if data not in self.datas:
+                raise Exception(f"Data inválida para este arquivo: {data}")
+
+            periodo = periodo_selecionado if periodo_selecionado else self.escolher_periodo()
+            if periodo not in self.MAPA_PERIODOS.values():
+                raise Exception(f"Período inválido: {periodo}")
+
             self.remover_periodo(data, periodo)
 
             self.salvar()

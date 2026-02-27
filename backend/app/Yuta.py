@@ -1,13 +1,13 @@
 from yuta_helpers import *
 from classes import (
-    FaturamentoCompleto,
-    FaturamentoAtipico,
-    FaturamentoDeAcordo,
-    ProgramaCopiarPeriodo,
-    ProgramaRemoverPeriodo,
-    FaturamentoSaoSebastiao,
-    GerarRelatorio,
     CriarPasta,
+    FaturamentoAtipico,
+    FaturamentoCompleto,
+    FaturamentoDeAcordo,
+    GerarRelatorio,
+    FaturamentoSaoSebastiao,
+    FazerPonto,
+    ProgramaRemoverPeriodo,
 )
 from desktop_app import run_desktop
 
@@ -15,7 +15,7 @@ __all__ = [
     "FaturamentoCompleto",
     "FaturamentoAtipico",
     "FaturamentoDeAcordo",
-    "ProgramaCopiarPeriodo",
+    "FazerPonto",
     "ProgramaRemoverPeriodo",
     "FaturamentoSaoSebastiao",
     "GerarRelatorio",

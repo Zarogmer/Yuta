@@ -140,7 +140,9 @@ class FaturamentoAtipico(FaturamentoCompleto):
 
         for i, (d, p, v) in enumerate(linhas):
             linha = linha_base + i
-            ws_report.range(f"C{linha}").value = d
+            celula_data = ws_report.range(f"C{linha}")
+            celula_data.value = d
+            celula_data.number_format = "[$-en-US]mmmm d, aaaa"
             ws_report.range(f"E{linha}").value = p
             cell = ws_report.range(f"G{linha}")
             cell.value = v

@@ -1,6 +1,12 @@
 {
   "_instrucoes": "Este é um arquivo de exemplo. Copie para 'config.json' e configure o caminho correto do seu PC.",
   "_exemplo_windows": "C:\\Users\\SeuNome\\SANPORT LOGÍSTICA PORTUÁRIA LTDA\\Central de Documentos - 01. FATURAMENTOS",
+  "_exemplo_windows_alt": "C:\\Users\\SeuNome\\SANPORT LOGÍSTICA PORTUÁRIA LTDA\\Central de Documentos - Documentos\\01. FATURAMENTOS",
+  "_assinaturas_info": "Preencha os caminhos das imagens de assinatura por usuário (PNG/JPG)",
+  "assinaturas_usuarios": {
+    "CAROL CARMO": "",
+    "DIOGO BARROS": ""
+  },
   "_ou_use_interface": "Você pode configurar o caminho através do menu Configurações no aplicativo",
   "caminho_base_faturamentos": "",
   "auto_detectar": true,

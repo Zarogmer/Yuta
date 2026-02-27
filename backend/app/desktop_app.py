@@ -1,15 +1,19 @@
 """
 Desktop Yuta – Central de Processos.
-Interface Tkinter para faturamentos, ponto, relatórios e configurações.
+Interface Tkinter para faturamentos, ponto e relatórios.
 """
 import queue
+import subprocess
+import sys
 import threading
 import tkinter as tk
+import os
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import messagebox, ttk
 
 from pdf2image import convert_from_path
 from PIL import Image, ImageTk
+from yuta_helpers import fechar_workbooks
 
 from classes import (
     CriarPasta,
@@ -18,15 +22,9 @@ from classes import (
     FaturamentoDeAcordo,
     FaturamentoSaoSebastiao,
     GerarRelatorio,
-    ProgramaCopiarPeriodo,
+    FazerPonto,
     ProgramaRemoverPeriodo,
 )
-from config_manager import (
-    configurar_caminho_base,
-    listar_caminhos_detectados,
-    obter_caminho_configurado,
-)
-
 # ---- Tema (cores e fontes) ----
 THEME = {
     "bg_root": "#0b1220",
@@ -57,8 +55,9 @@ class DesktopApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Yuta - Central de Processos")
-        self.geometry("1280x900+100+50")
+        self._center_window(self, 1280, 900)
         self.minsize(980, 640)
+        self.protocol("WM_DELETE_WINDOW", self._on_close_app)
 
         self._log_queue = queue.Queue()
         self._running = False
@@ -72,11 +71,220 @@ class DesktopApp(tk.Tk):
         self._preview_pages = []
         self._preview_zoom = 1.0
         self._preview_page_index = 0
+        self._startup_cancelled = False
 
         self._build_style()
+        self._usuario_nome = self._selecionar_usuario_inicial()
+        if self._startup_cancelled:
+            self.after(0, self.destroy)
+            return
         self._build_layout()
         self._configure_tags()
         self._poll_log()
+
+    def _on_close_app(self):
+        self.destroy()
+
+    @staticmethod
+    def _center_window(window: tk.Misc, largura: int, altura: int):
+        screen_w = window.winfo_screenwidth()
+        screen_h = window.winfo_screenheight()
+        x = max((screen_w // 2) - (largura // 2), 0)
+        y = max((screen_h // 2) - (altura // 2) - 30, 0)
+        window.geometry(f"{largura}x{altura}+{x}+{y}")
+
+    def _selecionar_usuario_inicial(self) -> str:
+        dialog = tk.Toplevel(self)
+        dialog.title("Yuta · Iniciar sessão")
+        dialog.configure(bg="#060b1a")
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        dialog.grab_set()
+
+        largura = 700
+        altura = 520
+        self._center_window(dialog, largura, altura)
+        dialog.minsize(largura, altura)
+
+        # Fundo
+        bg = tk.Frame(dialog, bg="#060b1a")
+        bg.pack(fill="both", expand=True)
+
+        # Card central
+        card = tk.Frame(bg, bg="#0f172a", highlightthickness=1, highlightbackground="#1f2a44")
+        card.place(relx=0.5, rely=0.5, anchor="center", width=520, height=420)
+
+        header = tk.Frame(card, bg="#0f172a")
+        header.pack(fill="x", padx=24, pady=(20, 8))
+
+        tk.Label(
+            header,
+            text="✓ Yuta",
+            bg="#0f172a",
+            fg="#e5e7eb",
+            font=("Segoe UI", 28, "bold"),
+        ).pack(anchor="center")
+        tk.Label(
+            header,
+            text="Central de Processos",
+            bg="#0f172a",
+            fg="#9ca3af",
+            font=("Segoe UI", 12),
+        ).pack(anchor="center", pady=(2, 0))
+
+        tk.Frame(card, bg="#1f2a44", height=1).pack(fill="x", pady=(8, 0))
+
+        content = tk.Frame(card, bg="#0f172a")
+        content.pack(fill="both", expand=True, padx=24, pady=(14, 24))
+
+        tk.Label(
+            content,
+            text="Iniciar sessão",
+            bg="#0f172a",
+            fg="#f3f4f6",
+            font=("Segoe UI", 15, "bold"),
+        ).pack(anchor="w")
+        tk.Label(
+            content,
+            text="Escolha o usuário",
+            bg="#0f172a",
+            fg="#9ca3af",
+            font=("Segoe UI", 11),
+        ).pack(anchor="w", pady=(2, 12))
+
+        usuario_var = tk.StringVar(value="Carol Carmo")
+
+        opcoes_frame = tk.Frame(content, bg="#0f172a")
+        opcoes_frame.pack(fill="x")
+
+        estilo_opcoes = {
+            "normal_border": "#25324d",
+            "normal_bg": "#111a2e",
+            "selected_border": "#3b82f6",
+            "selected_bg": "#142544",
+        }
+
+        opcoes = []
+
+        def selecionar(nome: str):
+            usuario_var.set(nome)
+            atualizar_estilo_opcoes()
+
+        def criar_opcao(nome: str, iniciais: str):
+            wrap = tk.Frame(
+                opcoes_frame,
+                bg=estilo_opcoes["normal_border"],
+                highlightthickness=0,
+            )
+            wrap.pack(fill="x", pady=(0, 8))
+
+            row = tk.Frame(wrap, bg=estilo_opcoes["normal_bg"], height=48)
+            row.pack(fill="x", padx=1, pady=1)
+            row.pack_propagate(False)
+
+            indicador = tk.Label(
+                row,
+                text="○",
+                bg=estilo_opcoes["normal_bg"],
+                fg="#93a4c2",
+                font=("Segoe UI", 15),
+                width=2,
+            )
+            indicador.pack(side="left", padx=(10, 4), pady=8)
+
+            avatar = tk.Label(
+                row,
+                text=iniciais,
+                bg="#d1d5db",
+                fg="#111827",
+                font=("Segoe UI", 10, "bold"),
+                width=3,
+                pady=2,
+            )
+            avatar.pack(side="left", padx=(0, 8), pady=8)
+
+            nome_lbl = tk.Label(
+                row,
+                text=nome,
+                bg=estilo_opcoes["normal_bg"],
+                fg="#e5e7eb",
+                font=("Segoe UI", 13, "bold"),
+            )
+            nome_lbl.pack(side="left")
+
+            def on_click(_e=None, n=nome):
+                selecionar(n)
+
+            for widget in (wrap, row, indicador, avatar, nome_lbl):
+                widget.bind("<Button-1>", on_click)
+
+            opcoes.append({
+                "nome": nome,
+                "wrap": wrap,
+                "row": row,
+                "indicador": indicador,
+                "nome_lbl": nome_lbl,
+                "avatar": avatar,
+            })
+
+        def atualizar_estilo_opcoes():
+            selecionado = usuario_var.get()
+            for opt in opcoes:
+                ativo = opt["nome"] == selecionado
+                border = estilo_opcoes["selected_border"] if ativo else estilo_opcoes["normal_border"]
+                fundo = estilo_opcoes["selected_bg"] if ativo else estilo_opcoes["normal_bg"]
+                opt["wrap"].configure(bg=border)
+                opt["row"].configure(bg=fundo)
+                opt["indicador"].configure(
+                    text="◉" if ativo else "○",
+                    bg=fundo,
+                    fg="#3b82f6" if ativo else "#93a4c2",
+                )
+                opt["nome_lbl"].configure(bg=fundo)
+                opt["avatar"].configure(bg="#f3f4f6" if ativo else "#d1d5db")
+
+        criar_opcao("Carol Carmo", "CC")
+        criar_opcao("Diogo Barros", "DB")
+        atualizar_estilo_opcoes()
+
+        escolhido = {"nome": "Carol Carmo"}
+
+        def confirmar():
+            escolhido["nome"] = usuario_var.get().strip() or "Carol Carmo"
+            dialog.destroy()
+
+        def fechar_app():
+            self._startup_cancelled = True
+            try:
+                dialog.grab_release()
+            except Exception:
+                pass
+            dialog.destroy()
+
+        btn_entrar = tk.Button(
+            content,
+            text="Entrar",
+            bg="#2563eb",
+            fg="#ffffff",
+            activebackground="#1d4ed8",
+            activeforeground="#ffffff",
+            relief="flat",
+            bd=0,
+            font=("Segoe UI", 14, "bold"),
+            cursor="hand2",
+            command=confirmar,
+        )
+        btn_entrar.pack(fill="x", pady=(12, 0), ipady=8)
+
+        dialog.bind("<Return>", lambda _e: confirmar())
+        dialog.protocol("WM_DELETE_WINDOW", fechar_app)
+        self.protocol("WM_DELETE_WINDOW", fechar_app)
+        dialog.focus_force()
+        dialog.wait_window()
+        self.protocol("WM_DELETE_WINDOW", self._on_close_app)
+        if self._startup_cancelled:
+            return ""
+        return escolhido["nome"] or "Carol Carmo"
 
     # ---------------------------
     # UI / Style
@@ -151,6 +359,11 @@ class DesktopApp(tk.Tk):
             text="Escolha um processo no menu. O log aparece em tempo real aqui do lado.",
             style="Sub.TLabel",
         ).pack(anchor="w", pady=(2, 0))
+        ttk.Label(
+            header,
+            text=f"Usuário ativo: {self._usuario_nome}",
+            style="Sub.TLabel",
+        ).pack(anchor="w", pady=(2, 0))
 
         # Body
         body = ttk.Frame(root, style="App.TFrame")
@@ -162,6 +375,10 @@ class DesktopApp(tk.Tk):
 
         ttk.Label(sidebar, text="Menu", style="Section.TLabel").pack(
             anchor="w", padx=14, pady=(14, 10)
+        )
+
+        ttk.Label(sidebar, text=f"Usuário: {self._usuario_nome}", style="Sub.TLabel").pack(
+            anchor="w", padx=14, pady=(0, 8)
         )
 
         # Buttons
@@ -330,41 +547,47 @@ class DesktopApp(tk.Tk):
         return [
             {
                 "label": "🧾 Faturamento (Normal)",
-                "preview": lambda: FaturamentoCompleto().executar(preview=True),
-                "action": lambda selection=None: FaturamentoCompleto().executar(
+                "preview": lambda: FaturamentoCompleto(usuario_nome=self._usuario_nome).executar(preview=True),
+                "action": lambda selection=None: FaturamentoCompleto(usuario_nome=self._usuario_nome).executar(
                     preview=False,
                     selection=selection,
                 ),
             },
             {
                 "label": "🧩 Faturamento (Atípico)",
-                "preview": lambda: FaturamentoAtipico().executar(preview=True),
-                "action": lambda selection=None: FaturamentoAtipico().executar(
+                "preview": lambda: FaturamentoAtipico(usuario_nome=self._usuario_nome).executar(preview=True),
+                "action": lambda selection=None: FaturamentoAtipico(usuario_nome=self._usuario_nome).executar(
                     preview=False,
                     selection=selection,
                 ),
             },
             {
                 "label": "⚓ Faturamento São Sebastião",
-                "preview": lambda: FaturamentoSaoSebastiao().executar(preview=True),
-                "action": lambda selection=None: FaturamentoSaoSebastiao().executar(
+                "preview": lambda: FaturamentoSaoSebastiao(usuario_nome=self._usuario_nome).executar(preview=True),
+                "action": lambda selection=None: FaturamentoSaoSebastiao(usuario_nome=self._usuario_nome).executar(
                     preview=False,
                     selection=selection,
                 ),
             },
             {
                 "label": "✅ De Acordo",
-                "preview": lambda: FaturamentoDeAcordo().executar(preview=True),
-                "action": lambda selection=None: FaturamentoDeAcordo().executar(
+                "preview": lambda: FaturamentoDeAcordo(usuario_nome=self._usuario_nome).executar(preview=True),
+                "action": lambda selection=None: FaturamentoDeAcordo(usuario_nome=self._usuario_nome).executar(
                     preview=False,
                     selection=selection,
                 ),
             },
-            {"label": "🕒 Fazer Ponto", "action": lambda: ProgramaCopiarPeriodo(debug=True).executar()},
-            {"label": "↩️ Desfazer Ponto", "action": lambda: ProgramaRemoverPeriodo(debug=True).executar()},
+            {
+                "label": "🕒 Fazer Ponto",
+                "action": lambda selection=None: FazerPonto(debug=True).executar(selection=selection),
+            },
+            {
+                "label": "↩️ Desfazer Ponto",
+                "action": lambda selection=None: ProgramaRemoverPeriodo(debug=True).executar(selection=selection),
+            },
             {"label": "📊 Relatório", "action": self._relatorio_safe},
             {"label": "📁 Criar Pasta", "action": self._criar_pasta_ui},
-            {"label": "⚙️ Configurações", "action": self._configuracoes_ui},
+            {"label": "📄 Gerador NFS-e", "action": self._abrir_gerador_nf},
         ]
 
     def _relatorio_safe(self):
@@ -372,6 +595,27 @@ class DesktopApp(tk.Tk):
             GerarRelatorio().executar()
         else:
             self._write_log("Relatório não implementado.\n", tag="warn")
+
+    def _abrir_gerador_nf(self):
+        """Abre o Gerador de NFS-e (GINFES Santos) em uma janela separada (PyQt6)."""
+        path_gerador = Path(__file__).resolve().parent / "classes" / "gerador_nf.py"
+        if not path_gerador.exists():
+            self._write_log(f"Gerador NFS-e não encontrado: {path_gerador}\n", tag="err")
+            messagebox.showerror("Erro", "Arquivo gerador_nf.py não encontrado.", parent=self)
+            return
+        try:
+            subprocess.Popen(
+                [sys.executable, str(path_gerador)],
+                cwd=str(path_gerador.parent.parent),
+            )
+            self._write_log("Gerador NFS-e aberto em nova janela.\n", tag="ok")
+        except Exception as e:
+            self._write_log(f"Erro ao abrir Gerador NFS-e: {e}\n", tag="err")
+            messagebox.showerror(
+                "Erro",
+                f"Não foi possível abrir o Gerador NFS-e.\n\nVerifique se o PyQt6 está instalado:\npip install PyQt6",
+                parent=self,
+            )
 
     def _criar_pasta_ui(self):
         """Coleta os dados e inicia a criação da pasta"""
@@ -493,10 +737,101 @@ class DesktopApp(tk.Tk):
         dialog.wait_window()
         return resultado["valor"]
 
+    def _pedir_dados_periodo(self, programa_cls, titulo):
+        programa = programa_cls(debug=False)
+
+        try:
+            programa.abrir_arquivo_navio()
+            if not programa.ws:
+                return None
+
+            programa.carregar_datas()
+            datas = programa.datas or []
+            if not datas:
+                messagebox.showwarning("Sem dados", "Nenhuma data encontrada na planilha.", parent=self)
+                return None
+
+            caminho_navio = str(programa.caminho_navio or "")
+        finally:
+            try:
+                fechar_workbooks(
+                    app=programa.app,
+                    wb_navio=programa.wb_navio,
+                    wb_cliente=programa.wb_cliente,
+                )
+            except Exception:
+                pass
+
+        dialog = tk.Toplevel(self)
+        dialog.title(titulo)
+        dialog.configure(bg=THEME["bg_root"])
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        frame = ttk.Frame(dialog, style="Card.TFrame")
+        frame.pack(padx=16, pady=14, fill="both", expand=True)
+
+        ttk.Label(frame, text="Data", style="Section.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 4))
+        data_var = tk.StringVar(value=datas[0])
+        data_cb = ttk.Combobox(frame, textvariable=data_var, values=datas, state="readonly", width=36)
+        data_cb.grid(row=1, column=0, sticky="ew", pady=(0, 12))
+
+        ttk.Label(frame, text="Período", style="Section.TLabel").grid(row=2, column=0, sticky="w", pady=(0, 4))
+        periodos = ["06h", "12h", "18h", "00h"]
+        periodo_var = tk.StringVar(value=periodos[0])
+        periodo_cb = ttk.Combobox(frame, textvariable=periodo_var, values=periodos, state="readonly", width=36)
+        periodo_cb.grid(row=3, column=0, sticky="ew", pady=(0, 12))
+
+        buttons = ttk.Frame(frame, style="Card.TFrame")
+        buttons.grid(row=4, column=0, sticky="e")
+
+        resultado = {"valor": None}
+
+        def on_ok():
+            data = data_var.get().strip()
+            periodo = periodo_var.get().strip()
+            if not data or not periodo:
+                messagebox.showwarning("Dados incompletos", "Selecione data e período.", parent=dialog)
+                return
+
+            resultado["valor"] = {
+                "data": data,
+                "periodo": periodo,
+                "caminho_navio": caminho_navio,
+            }
+            dialog.destroy()
+
+        def on_cancel():
+            dialog.destroy()
+
+        dialog.bind('<Return>', lambda _event: on_ok())
+
+        ttk.Button(buttons, text="Cancelar", style="Ghost.TButton", command=on_cancel).pack(side="right", padx=(8, 0))
+        ttk.Button(buttons, text="OK", style="Action.TButton", command=on_ok).pack(side="right")
+
+        data_cb.focus_set()
+        dialog.wait_window()
+        return resultado["valor"]
+
     def _handle_menu_action(self, item):
         # Casos especiais que precisam coletar dados antes de executar
         if item["label"] == "📁 Criar Pasta":
             self._criar_pasta_ui()  # Chama diretamente (não via _run_action)
+            return
+
+        if item["label"] in ("🕒 Fazer Ponto", "↩️ Desfazer Ponto"):
+            programa_cls = FazerPonto if item["label"] == "🕒 Fazer Ponto" else ProgramaRemoverPeriodo
+            selecao = self._pedir_dados_periodo(programa_cls, item["label"])
+            if not selecao:
+                self._status.configure(text="Operação cancelada")
+                return
+
+            self._write_log(
+                f"{item['label']}: data={selecao['data']} | período={selecao['periodo']}\n",
+                tag="info",
+            )
+            self._clear_pending_action()
+            self._run_action(lambda: item["action"](selecao))
             return
         
         if item.get("preview"):
@@ -722,14 +1057,31 @@ class DesktopApp(tk.Tk):
                 self._write_log(f"Preview PDF nao encontrado: {path}\n", tag="warn")
                 return
 
-            poppler_path = Path(r"C:\poppler-25.12.0\Library\bin")
-            kwargs = {}
-            if poppler_path.exists():
-                kwargs["poppler_path"] = str(poppler_path)
+            pages = None
+            erros = []
 
-            pages = convert_from_path(str(path), **kwargs)
+            try:
+                pages = convert_from_path(str(path))
+            except Exception as exc:
+                erros.append(str(exc))
+
             if not pages:
-                self._write_log("Nao foi possivel renderizar o PDF.\n", tag="warn")
+                for poppler_dir in self._poppler_paths_candidatos():
+                    try:
+                        pages = convert_from_path(str(path), poppler_path=str(poppler_dir))
+                        if pages:
+                            break
+                    except Exception as exc:
+                        erros.append(str(exc))
+
+            if not pages:
+                self._write_log(
+                    "Preview interno indisponivel neste computador (Poppler nao encontrado). Abrindo PDF externamente.\n",
+                    tag="warn",
+                )
+                if erros:
+                    self._write_log(f"Detalhe tecnico: {erros[-1]}\n", tag="warn")
+                self._abrir_pdf_externo(path)
                 return
 
             self._preview_pages = pages
@@ -739,6 +1091,49 @@ class DesktopApp(tk.Tk):
             self._notebook.select(1)
         except Exception as exc:
             self._write_log(f"Falha ao renderizar PDF: {exc}\n", tag="warn")
+
+    def _poppler_paths_candidatos(self):
+        candidatos = []
+
+        env_poppler = os.environ.get("POPPLER_PATH")
+        if env_poppler:
+            candidatos.append(Path(env_poppler))
+
+        path_env = os.environ.get("PATH", "")
+        for parte in path_env.split(os.pathsep):
+            if not parte:
+                continue
+            if "poppler" in parte.lower():
+                candidatos.append(Path(parte))
+
+        candidatos.extend(
+            [
+                Path(r"C:\poppler-25.12.0\Library\bin"),
+                Path(r"C:\poppler\Library\bin"),
+                Path(r"C:\Program Files\poppler\Library\bin"),
+                Path(r"C:\Program Files (x86)\poppler\Library\bin"),
+            ]
+        )
+
+        vistos = set()
+        validos = []
+        for pasta in candidatos:
+            chave = str(pasta).lower().strip()
+            if not chave or chave in vistos:
+                continue
+            vistos.add(chave)
+            if pasta.exists() and (pasta / "pdfinfo.exe").exists():
+                validos.append(pasta)
+        return validos
+
+    def _abrir_pdf_externo(self, path: Path):
+        try:
+            if hasattr(os, "startfile"):
+                os.startfile(str(path))
+            else:
+                subprocess.Popen(["xdg-open", str(path)])
+        except Exception as exc:
+            self._write_log(f"Nao foi possivel abrir o PDF externamente: {exc}\n", tag="warn")
 
     def _clear_preview(self):
         self._preview_pil = None
@@ -750,121 +1145,6 @@ class DesktopApp(tk.Tk):
         self._preview_canvas.delete("preview_img")
         if self._preview_placeholder:
             self._preview_canvas.itemconfigure(self._preview_placeholder, state="normal")
-
-    # ---------------------------
-    # Configurações
-    # ---------------------------
-    def _configuracoes_ui(self):
-        """Abre diálogo para configurar o caminho base de faturamentos"""
-        dialog = tk.Toplevel(self)
-        dialog.title("Configurações")
-        dialog.configure(bg=THEME["bg_root"])
-        dialog.resizable(False, False)
-        dialog.grab_set()
-
-        frame = ttk.Frame(dialog, style="Card.TFrame")
-        frame.pack(padx=16, pady=14, fill="both", expand=True)
-
-        ttk.Label(frame, text="Caminho Base de Faturamentos", style="Section.TLabel").grid(
-            row=0, column=0, columnspan=2, sticky="w", pady=(0, 8)
-        )
-
-        # Mostra caminho atual
-        caminho_atual = obter_caminho_configurado()
-        if caminho_atual:
-            ttk.Label(frame, text="Caminho atual:", style="Sub.TLabel").grid(
-                row=1, column=0, columnspan=2, sticky="w", pady=(0, 4)
-            )
-            caminho_label = tk.Text(
-                frame,
-                height=2,
-                width=60,
-                wrap="word",
-                bg=THEME["bg_root"],
-                fg=THEME["fg_secondary"],
-                font=THEME["font_sub"],
-                relief="flat",
-            )
-            caminho_label.insert("1.0", caminho_atual)
-            caminho_label.config(state="disabled")
-            caminho_label.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 12))
-        else:
-            ttk.Label(
-                frame,
-                text="⚠️ Nenhum caminho configurado (usando auto-detecção)",
-                style="Sub.TLabel",
-            ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 12))
-
-        # Lista caminhos detectados
-        caminhos_detectados = listar_caminhos_detectados()
-        if caminhos_detectados:
-            ttk.Label(frame, text="Caminhos detectados:", style="Sub.TLabel").grid(
-                row=3, column=0, columnspan=2, sticky="w", pady=(0, 4)
-            )
-            for i, caminho in enumerate(caminhos_detectados):
-                ttk.Label(frame, text=f"✓ {caminho}", style="Sub.TLabel").grid(
-                    row=4 + i, column=0, columnspan=2, sticky="w", pady=(0, 2)
-                )
-
-        # Botões de ação
-        botoes_frame = ttk.Frame(frame, style="Card.TFrame")
-        botoes_frame.grid(
-            row=10, column=0, columnspan=2, sticky="ew", pady=(16, 0)
-        )
-
-        def escolher_caminho():
-            caminho = filedialog.askdirectory(
-                title="Selecione a pasta: Central de Documentos - 01. FATURAMENTOS",
-                initialdir=Path.home(),
-            )
-            if caminho:
-                if configurar_caminho_base(caminho):
-                    messagebox.showinfo(
-                        "Sucesso",
-                        f"Caminho configurado com sucesso!\n\n{caminho}",
-                        parent=dialog,
-                    )
-                    dialog.destroy()
-                else:
-                    messagebox.showerror(
-                        "Erro",
-                        "O caminho selecionado não existe ou não é válido.",
-                        parent=dialog,
-                    )
-
-        def usar_auto_detectado():
-            if caminhos_detectados:
-                caminho = str(caminhos_detectados[0])
-                if configurar_caminho_base(caminho):
-                    messagebox.showinfo(
-                        "Sucesso",
-                        f"Caminho configurado:\n\n{caminho}",
-                        parent=dialog,
-                    )
-                    dialog.destroy()
-
-        ttk.Button(
-            botoes_frame,
-            text="Escolher Pasta Manualmente...",
-            style="Action.TButton",
-            command=escolher_caminho,
-        ).pack(side="left", padx=(0, 8), fill="x", expand=True)
-
-        if caminhos_detectados:
-            ttk.Button(
-                botoes_frame,
-                text="Usar Auto-Detectado",
-                style="Ghost.TButton",
-                command=usar_auto_detectado,
-            ).pack(side="left", fill="x", expand=True)
-
-        ttk.Button(
-            botoes_frame,
-            text="Cancelar",
-            style="Ghost.TButton",
-            command=dialog.destroy,
-        ).pack(side="right", padx=(8, 0))
-
 
 def run_desktop():
     app = DesktopApp()

@@ -3,10 +3,14 @@ import win32com.client
 from pathlib import Path
 from datetime import datetime, date
 import unicodedata
+import re
+
+from config_manager import obter_caminho_assinatura_usuario
 
 
 DEFAULT_ASSUNTO = "FATURAMENTO SANTOS {dn}/{ano} - M/V {navio}"
 ASSUNTO_SAO_SEBASTIAO = "FATURAMENTO {dn}/{ano2} - M/V {navio} - PORTO DE SÃO SEBASTIÃO"
+CC_FIXO = ["financeiro@sanportlogistica.com.br"]
 DEFAULT_CORPO = """Prezados, {saudacao}!
 
 Seguem anexos faturamento e folhas OGMO do navio {navio} em referência.
@@ -306,6 +310,66 @@ def obter_saudacao(agora: datetime | None = None) -> str:
     return "boa noite"
 
 
+def _normalizar_nome_usuario(nome: str | None) -> str:
+    if not nome:
+        return ""
+    nome_norm = unicodedata.normalize("NFKD", str(nome))
+    nome_norm = nome_norm.encode("ASCII", "ignore").decode("ASCII")
+    return " ".join(nome_norm.upper().split())
+
+
+def _cid_assinatura(usuario_nome: str | None) -> str:
+    base = _normalizar_nome_usuario(usuario_nome) or "ASSINATURA"
+    base = re.sub(r"[^A-Z0-9]+", "_", base).strip("_")
+    return f"assinatura_{base.lower() or 'usuario'}"
+
+
+def _inserir_assinatura_apos_atenciosamente(corpo_html: str, cid: str) -> str:
+    bloco = (
+        "<p>Atenciosamente,</p>"
+        "<p>&nbsp;</p>"
+        "<p>&nbsp;</p>"
+        f"<p><img src=\"cid:{cid}\" style=\"max-width:1200px;height:auto;\"></p>"
+    )
+
+    marcador = "<p>Atenciosamente,</p>"
+    if marcador in corpo_html:
+        return corpo_html.replace(marcador, bloco, 1)
+
+    if "Atenciosamente," in corpo_html:
+        return corpo_html.replace("Atenciosamente,", bloco, 1)
+
+    fechamento_body = re.search(r"</body\s*>", corpo_html, flags=re.IGNORECASE)
+    if fechamento_body:
+        idx = fechamento_body.start()
+        return corpo_html[:idx] + bloco + corpo_html[idx:]
+
+    fechamento_html = re.search(r"</html\s*>", corpo_html, flags=re.IGNORECASE)
+    if fechamento_html:
+        idx = fechamento_html.start()
+        return corpo_html[:idx] + bloco + corpo_html[idx:]
+
+    return corpo_html + bloco
+
+
+def _mesclar_cc(*listas_cc) -> list[str]:
+    resultado = []
+    vistos = set()
+    for lista in listas_cc:
+        if not lista:
+            continue
+        for email in lista:
+            email_limpo = str(email).strip()
+            if not email_limpo:
+                continue
+            chave = email_limpo.lower()
+            if chave in vistos:
+                continue
+            vistos.add(chave)
+            resultado.append(email_limpo)
+    return resultado
+
+
 def criar_rascunho_email_cliente(
     nome_cliente: str,
     anexos=None,
@@ -321,6 +385,7 @@ def criar_rascunho_email_cliente(
     atracacao_fim=None,
     costs=None,
     adm=None,
+    usuario_nome: str | None = None,
 ):
     """
     Cria um rascunho no Outlook com base no nome do cliente.
@@ -332,7 +397,7 @@ def criar_rascunho_email_cliente(
         raise ValueError(f"Cliente nao encontrado: {nome_cliente_norm}")
 
     para = config.get("para", [])
-    cc = config.get("cc", [])
+    cc = _mesclar_cc(config.get("cc", []), CC_FIXO)
     contexto = {
         "cliente": nome_cliente_norm,
         "dn": dn or "",
@@ -365,8 +430,26 @@ def criar_rascunho_email_cliente(
         mail = outlook.CreateItem(0)
 
         mail.Subject = assunto_final
+        caminho_assinatura = obter_caminho_assinatura_usuario(usuario_nome or "")
+
         if corpo_html_final:
-            mail.HTMLBody = corpo_html_final
+            if caminho_assinatura:
+                cid = _cid_assinatura(usuario_nome)
+                corpo_html_final = _inserir_assinatura_apos_atenciosamente(
+                    corpo_html_final,
+                    cid,
+                )
+                mail.HTMLBody = corpo_html_final
+                try:
+                    anexo_ass = mail.Attachments.Add(str(caminho_assinatura))
+                    anexo_ass.PropertyAccessor.SetProperty(
+                        "http://schemas.microsoft.com/mapi/proptag/0x3712001F",
+                        cid,
+                    )
+                except Exception as e:
+                    print(f"⚠️ Falha ao embutir assinatura de e-mail: {e}")
+            else:
+                mail.HTMLBody = corpo_html_final
         else:
             mail.Body = corpo_final
         mail.To = "; ".join(para)

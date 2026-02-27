@@ -6,6 +6,8 @@ Permite configurar caminhos específicos por computador
 import json
 from pathlib import Path
 from typing import Dict, Any
+import os
+import unicodedata
 
 
 def _obter_caminho_config() -> Path:
@@ -58,20 +60,108 @@ def _salvar_config(config: Dict[str, Any]) -> None:
 
 
 def _auto_detectar_base_faturamentos() -> Path | None:
-    """Tenta detectar automaticamente a pasta base de faturamentos"""
+    """Tenta detectar automaticamente a pasta base de faturamentos em diferentes padrões."""
+
+    def _normalizar_texto(valor: str) -> str:
+        texto = unicodedata.normalize("NFKD", str(valor or ""))
+        texto = "".join(ch for ch in texto if not unicodedata.combining(ch))
+        return texto.upper().strip()
+
+    def _eh_base_faturamentos(path: Path) -> bool:
+        nome = _normalizar_texto(path.name)
+        pai_nome = _normalizar_texto(path.parent.name) if path.parent else ""
+
+        if "FATURAMENTOS" not in nome:
+            return False
+
+        if "CENTRAL DE DOCUMENTOS" in nome:
+            return True
+
+        if nome.startswith("01"):
+            return True
+
+        if "CENTRAL DE DOCUMENTOS" in pai_nome:
+            return True
+
+        return False
+
     home = Path.home()
-    
-    possiveis_bases = [
-        # OneDrive empresarial
-        home / "OneDrive - SANPORT LOGÍSTICA PORTUÁRIA LTDA" / "Central de Documentos - 01. FATURAMENTOS",
-        # Pasta sincronizada diretamente
-        home / "SANPORT LOGÍSTICA PORTUÁRIA LTDA" / "Central de Documentos - 01. FATURAMENTOS",
-    ]
-    
-    for base in possiveis_bases:
-        if base.exists():
-            return base
-    
+
+    raiz_usuario = [home]
+
+    userprofile = os.environ.get("USERPROFILE")
+    if userprofile:
+        raiz_usuario.append(Path(userprofile))
+
+    onedrive = os.environ.get("OneDrive")
+    if onedrive:
+        raiz_usuario.append(Path(onedrive))
+
+    onedrive_consumer = os.environ.get("OneDriveConsumer")
+    if onedrive_consumer:
+        raiz_usuario.append(Path(onedrive_consumer))
+
+    onedrive_commercial = os.environ.get("OneDriveCommercial")
+    if onedrive_commercial:
+        raiz_usuario.append(Path(onedrive_commercial))
+
+    candidatos_raiz = []
+    vistos = set()
+    for raiz in raiz_usuario:
+        if not raiz:
+            continue
+        try:
+            raiz_abs = raiz.resolve()
+        except Exception:
+            raiz_abs = raiz
+        chave = str(raiz_abs).upper()
+        if chave in vistos:
+            continue
+        vistos.add(chave)
+        if raiz_abs.exists():
+            candidatos_raiz.append(raiz_abs)
+
+    for raiz in candidatos_raiz:
+        # 1) Caminho dentro da pasta SANPORT (suporta variações de layout)
+        try:
+            for item in raiz.iterdir():
+                if not item.is_dir():
+                    continue
+
+                item_nome = _normalizar_texto(item.name)
+                if "SANPORT" in item_nome:
+                    # 1.1) Direto dentro da pasta SANPORT
+                    for sub in item.iterdir():
+                        if sub.is_dir() and _eh_base_faturamentos(sub):
+                            return sub
+
+                    # 1.2) Padrão: SANPORT\Central de Documentos - Documentos\01. FATURAMENTOS
+                    central_docs = item / "Central de Documentos - Documentos"
+                    if central_docs.exists() and central_docs.is_dir():
+                        for sub in central_docs.iterdir():
+                            if sub.is_dir() and _eh_base_faturamentos(sub):
+                                return sub
+        except Exception:
+            pass
+
+        # 2) Caminhos alternativos diretos
+        candidatos_diretos = [
+            raiz / "Central de Documentos - 01. FATURAMENTOS",
+            raiz / "Central de Documentos - Documentos" / "01. FATURAMENTOS",
+        ]
+        for direto in candidatos_diretos:
+            if direto.exists() and direto.is_dir() and _eh_base_faturamentos(direto):
+                return direto
+
+    # 3) Busca recursiva limitada no perfil do usuário
+    for raiz in candidatos_raiz:
+        try:
+            for candidato in raiz.rglob("*"):
+                if candidato.is_dir() and _eh_base_faturamentos(candidato):
+                    return candidato
+        except Exception:
+            continue
+
     return None
 
 
@@ -111,7 +201,9 @@ def obter_caminho_base_faturamentos() -> Path:
         "2. Ou edite o arquivo config.json na raiz do projeto\n"
         "\n"
         f"O caminho deve ser algo como:\n"
-        f"C:\\Users\\SeuNome\\SANPORT LOGÍSTICA PORTUÁRIA LTDA\\Central de Documentos - 01. FATURAMENTOS"
+        f"C:\\Users\\SeuNome\\SANPORT LOGÍSTICA PORTUÁRIA LTDA\\Central de Documentos - 01. FATURAMENTOS\n"
+        f"ou\n"
+        f"C:\\Users\\SeuNome\\SANPORT LOGÍSTICA PORTUÁRIA LTDA\\Central de Documentos - Documentos\\01. FATURAMENTOS"
     )
 
 
@@ -149,12 +241,41 @@ def obter_caminho_configurado() -> str:
 
 
 def listar_caminhos_detectados() -> list[Path]:
-    """Lista todos os caminhos possíveis detectados no sistema"""
-    home = Path.home()
-    
-    possiveis = [
-        home / "OneDrive - SANPORT LOGÍSTICA PORTUÁRIA LTDA" / "Central de Documentos - 01. FATURAMENTOS",
-        home / "SANPORT LOGÍSTICA PORTUÁRIA LTDA" / "Central de Documentos - 01. FATURAMENTOS",
-    ]
-    
-    return [p for p in possiveis if p.exists()]
+    """Lista caminhos detectados no sistema."""
+    caminho = _auto_detectar_base_faturamentos()
+    return [caminho] if caminho else []
+
+
+def obter_caminho_assinatura_usuario(usuario_nome: str) -> Path | None:
+    """
+    Retorna o caminho da imagem de assinatura para o usuário, se configurado.
+
+    Config esperado no config.json:
+    {
+      "assinaturas_usuarios": {
+        "CAROL CARMO": "C:/caminho/assinatura_carol.png",
+        "DIOGO BARROS": "C:/caminho/assinatura_diogo.png"
+      }
+    }
+    """
+
+    def _normalizar_usuario(valor: str) -> str:
+        texto = unicodedata.normalize("NFKD", str(valor or ""))
+        texto = "".join(ch for ch in texto if not unicodedata.combining(ch))
+        return " ".join(texto.upper().split())
+
+    usuario_norm = _normalizar_usuario(usuario_nome)
+    if not usuario_norm:
+        return None
+
+    config = _carregar_config()
+    mapa = config.get("assinaturas_usuarios", {})
+
+    if isinstance(mapa, dict):
+        caminho = str(mapa.get(usuario_norm, "")).strip()
+        if caminho:
+            path = Path(caminho)
+            if path.exists() and path.is_file():
+                return path
+
+    return None

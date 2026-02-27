@@ -11,6 +11,7 @@ import urllib.request
 
 import certifi
 import holidays
+
 import pdfplumber
 import pytesseract
 import xlwings as xw
@@ -86,7 +87,7 @@ def _tentar_forcar_download_onedrive(caminho: Path) -> bool:
                     return True
             except Exception as e:
                 print(f"   ⚠️ Não foi possível forçar download: {e}")
-            
+
             return False
     except (FileNotFoundError, OSError) as e:
         print(f"   ❌ Erro ao acessar: {e}")
@@ -642,18 +643,59 @@ def salvar_excel_com_nome(wb, pasta_saida: Path, nome_base: str) -> Path:
 
     return caminho_final
 
-def obter_modelo_word_cargonave(pasta_faturamentos: Path, cliente: str) -> Path:
+def obter_modelo_word_cargonave(pasta_faturamentos: Path, cliente: str = "CARGONAVE") -> Path:
+    """
+    Localiza o modelo de recibo CARGONAVE com busca flexível.
+    Suporta .doc e .docx e tenta pastas alternativas para rodar em PCs diferentes.
+    """
     caminhos_teste = [
         pasta_faturamentos / cliente,
-        pasta_faturamentos / "CARGONAVE",  # fallback
+        pasta_faturamentos / "CARGONAVE",
+        pasta_faturamentos,
+        pasta_faturamentos.parent / "CARGONAVE",
     ]
 
-    for caminho in caminhos_teste:
-            arquivos = list(caminho.glob("RECIBO - YUTA.docx"))
-            if arquivos:
-                return arquivos[0]
+    padroes = [
+        "RECIBO - YUTA.doc",
+        "RECIBO - YUTA.docx",
+        "*RECIBO*YUTA*.doc",
+        "*RECIBO*YUTA*.docx",
+    ]
 
-    raise FileNotFoundError(f"Modelo Word não encontrado em {caminhos_teste}")
+    vistos = set()
+    candidatos = []
+
+    for caminho in caminhos_teste:
+        if not caminho.exists() or not caminho.is_dir():
+            continue
+
+        chave = str(caminho.resolve()).upper()
+        if chave in vistos:
+            continue
+        vistos.add(chave)
+
+        for padrao in padroes:
+            candidatos.extend(caminho.glob(padrao))
+
+        # fallback recursivo (limitado ao necessário)
+        if not candidatos:
+            for padrao in padroes:
+                candidatos.extend(caminho.rglob(padrao))
+
+        if candidatos:
+            # prefere correspondência exata de nome
+            exatos = [
+                p for p in candidatos
+                if p.name.strip().upper() in {"RECIBO - YUTA.DOC", "RECIBO - YUTA.DOCX"}
+            ]
+            alvo = sorted(exatos or candidatos, key=lambda p: p.stat().st_mtime, reverse=True)[0]
+            print(f"✅ Modelo Word encontrado: {alvo}")
+            return alvo
+
+    raise FileNotFoundError(
+        "Modelo Word não encontrado. Pastas verificadas: "
+        + " | ".join(str(p) for p in caminhos_teste)
+    )
 
 
 def gerar_pdf(caminho_excel, pasta_saida, nome_base, ws=None):
@@ -664,8 +706,16 @@ def gerar_pdf(caminho_excel, pasta_saida, nome_base, ws=None):
         caminho_pdf = pasta_saida / f"{nome_base}.pdf"
 
         if ws is not None:
+            try:
+                ajustar_layout_pdf_por_aba(ws)
+            except Exception:
+                pass
             ws.api.ExportAsFixedFormat(Type=0, Filename=str(caminho_pdf))
         else:
+            try:
+                ajustar_layout_todas_abas_visiveis_no_wb(wb)
+            except Exception:
+                pass
             wb.api.ExportAsFixedFormat(Type=0, Filename=str(caminho_pdf))
 
         print(f"📄 PDF gerado: {caminho_pdf}")
@@ -685,6 +735,11 @@ def gerar_pdf_workbook_inteiro(wb, pasta_saida: Path, nome_base: str) -> Path:
     if caminho_pdf.exists():
         caminho_pdf.unlink()
 
+    try:
+        ajustar_layout_todas_abas_visiveis_no_wb(wb)
+    except Exception:
+        pass
+
     wb.api.ExportAsFixedFormat(
         Type=0,  # PDF
         Filename=str(caminho_pdf),
@@ -695,6 +750,199 @@ def gerar_pdf_workbook_inteiro(wb, pasta_saida: Path, nome_base: str) -> Path:
     )
 
     return caminho_pdf
+
+
+def ajustar_layout_report_vigia(ws_report):
+    """
+    Padroniza o layout de impressão da aba REPORT VIGIA para evitar corte no PDF.
+    """
+    xlUp = -4162
+    xlPortrait = 1
+    xlPaperA4 = 9
+
+    try:
+        # REPORT VIGIA usa principalmente colunas C/E/G; usar apenas coluna A
+        # pode reduzir a área e cortar o PDF.
+        colunas_relevantes = [1, 3, 5, 6, 7, 10]  # A, C, E, F, G, J
+        ultima_linha = 1
+        for coluna in colunas_relevantes:
+            linha_coluna = ws_report.api.Cells(ws_report.api.Rows.Count, coluna).End(xlUp).Row
+            if linha_coluna and int(linha_coluna) > ultima_linha:
+                ultima_linha = int(linha_coluna)
+
+        ultima_linha = max(int(ultima_linha), 40)
+        ultima_coluna = 10
+
+        area = ws_report.api.Range(
+            ws_report.api.Cells(1, 1),
+            ws_report.api.Cells(ultima_linha, ultima_coluna),
+        )
+
+        page_setup = ws_report.api.PageSetup
+        page_setup.Zoom = False
+        page_setup.FitToPagesWide = 1
+        page_setup.FitToPagesTall = 1
+        page_setup.Orientation = xlPortrait
+        page_setup.PaperSize = xlPaperA4
+        page_setup.CenterHorizontally = True
+        page_setup.PrintArea = area.Address
+    except Exception as e:
+        print(f"⚠️ Não foi possível ajustar layout do REPORT VIGIA: {e}")
+
+
+def ajustar_layout_report_vigia_no_wb(wb):
+    for ws in wb.sheets:
+        if ws.name.strip().upper() == "REPORT VIGIA":
+            ajustar_layout_report_vigia(ws)
+            break
+
+
+def _detectar_area_util_planilha(
+    ws,
+    min_linhas=40,
+    min_colunas=8,
+    max_linhas_scan=220,
+    max_colunas_scan=40,
+):
+    """
+    Detecta a área útil real por conteúdo para evitar encolhimento por UsedRange inflado.
+    """
+    try:
+        valores = ws.range((1, 1), (max_linhas_scan, max_colunas_scan)).value
+        if not isinstance(valores, list):
+            valores = [[valores]]
+
+        ultima_linha = 1
+        ultima_coluna = 1
+
+        for i, linha in enumerate(valores, start=1):
+            if not isinstance(linha, list):
+                linha = [linha]
+            for j, valor in enumerate(linha, start=1):
+                if valor not in (None, ""):
+                    ultima_linha = max(ultima_linha, i)
+                    ultima_coluna = max(ultima_coluna, j)
+
+        return max(ultima_linha, min_linhas), max(ultima_coluna, min_colunas)
+    except Exception:
+        return min_linhas, min_colunas
+
+
+def ajustar_layout_front_vigia(ws_front):
+    """
+    Padroniza a impressão da FRONT VIGIA para reduzir variação entre máquinas/usuários.
+    """
+    xlPortrait = 1
+    xlPaperA4 = 9
+
+    try:
+        ultima_linha, ultima_coluna = _detectar_area_util_planilha(
+            ws_front,
+            min_linhas=45,
+            min_colunas=10,
+            max_linhas_scan=120,
+            max_colunas_scan=20,
+        )
+
+        area = ws_front.api.Range(
+            ws_front.api.Cells(1, 1),
+            ws_front.api.Cells(ultima_linha, ultima_coluna),
+        )
+
+        page_setup = ws_front.api.PageSetup
+        page_setup.Zoom = False
+        page_setup.FitToPagesWide = 1
+        page_setup.FitToPagesTall = 1
+        page_setup.Orientation = xlPortrait
+        page_setup.PaperSize = xlPaperA4
+        page_setup.CenterHorizontally = True
+        page_setup.CenterVertically = False
+        page_setup.PrintArea = area.Address
+    except Exception as e:
+        print(f"⚠️ Não foi possível ajustar layout da FRONT VIGIA: {e}")
+
+
+def ajustar_layout_front_vigia_no_wb(wb):
+    for ws in wb.sheets:
+        if ws.name.strip().upper() == "FRONT VIGIA":
+            ajustar_layout_front_vigia(ws)
+            break
+
+
+def ajustar_layout_planilha_generica(ws, min_linhas=40, min_colunas=8):
+    xlPortrait = 1
+    xlPaperA4 = 9
+
+    try:
+        ultima_linha, ultima_coluna = _detectar_area_util_planilha(
+            ws,
+            min_linhas=min_linhas,
+            min_colunas=min_colunas,
+            max_linhas_scan=220,
+            max_colunas_scan=40,
+        )
+
+        area = ws.api.Range(
+            ws.api.Cells(1, 1),
+            ws.api.Cells(ultima_linha, ultima_coluna),
+        )
+
+        page_setup = ws.api.PageSetup
+        page_setup.Zoom = False
+        page_setup.FitToPagesWide = 1
+        page_setup.FitToPagesTall = 1
+        page_setup.Orientation = xlPortrait
+        page_setup.PaperSize = xlPaperA4
+        page_setup.CenterHorizontally = True
+        page_setup.CenterVertically = False
+        page_setup.PrintArea = area.Address
+    except Exception as e:
+        print(f"⚠️ Não foi possível ajustar layout da aba '{ws.name}': {e}")
+
+
+def _normalizar_nome_aba_layout(nome: str) -> str:
+    texto = unicodedata.normalize("NFKD", str(nome or ""))
+    texto = texto.encode("ASCII", "ignore").decode("ASCII")
+    texto = re.sub(r"\s+", " ", texto).strip().upper()
+    return texto
+
+
+def ajustar_layout_pdf_por_aba(ws):
+    nome = _normalizar_nome_aba_layout(getattr(ws, "name", ""))
+
+    if nome == "REPORT VIGIA":
+        ajustar_layout_report_vigia(ws)
+        return
+
+    if nome == "FRONT VIGIA":
+        ajustar_layout_front_vigia(ws)
+        return
+
+    ajustar_layout_planilha_generica(ws)
+
+
+def ajustar_layout_todas_abas_visiveis_no_wb(wb, ignorar_abas=()):
+    ignorar_norm = {
+        _normalizar_nome_aba_layout(nome)
+        for nome in (ignorar_abas or ())
+    }
+
+    for ws in wb.sheets:
+        try:
+            if not bool(ws.api.Visible):
+                continue
+        except Exception:
+            pass
+
+        nome_norm = _normalizar_nome_aba_layout(getattr(ws, "name", ""))
+        if nome_norm in ignorar_norm:
+            continue
+
+        ajustar_layout_pdf_por_aba(ws)
+
+
+def ajustar_layout_abas_estrategicas_no_wb(wb):
+    ajustar_layout_todas_abas_visiveis_no_wb(wb)
 
 
 def gerar_pdf_faturamento_completo(wb, pasta_saida: Path, nome_base: str, apenas_front=False) -> Path:
@@ -713,6 +961,7 @@ def gerar_pdf_faturamento_completo(wb, pasta_saida: Path, nome_base: str, apenas
                 break
         
         if ws_front:
+            ajustar_layout_pdf_por_aba(ws_front)
             # Exporta apenas essa aba
             ws_front.api.ExportAsFixedFormat(
                 Type=0,  # PDF
@@ -734,13 +983,7 @@ def gerar_pdf_faturamento_completo(wb, pasta_saida: Path, nome_base: str, apenas
             ws.api.Visible = False
             break
 
-    # 🔥 Remove qualquer Print_Area escondido
-    try:
-        for nome in list(wb.api.Names):
-            if nome.Name.lower() == "print_area":
-                nome.Delete()
-    except:
-        pass
+    ajustar_layout_todas_abas_visiveis_no_wb(wb, ignorar_abas=("NF",))
 
     # 📄 Exporta workbook inteiro
     wb.api.ExportAsFixedFormat(
@@ -748,7 +991,7 @@ def gerar_pdf_faturamento_completo(wb, pasta_saida: Path, nome_base: str, apenas
         Filename=str(caminho_pdf),
         Quality=0,
         IncludeDocProperties=True,
-        IgnorePrintAreas=True,
+        IgnorePrintAreas=False,
         OpenAfterPublish=False
     )
 
@@ -796,6 +1039,7 @@ def gerar_pdf_do_wb_aberto(wb, pasta_saida, nome_base, ignorar_abas=("nf",), ape
                 break
         
         if ws_front:
+            ajustar_layout_pdf_por_aba(ws_front)
             # Ativa e exporta apenas essa aba
             ws_front.activate()
             ws_front.api.ExportAsFixedFormat(
@@ -818,6 +1062,8 @@ def gerar_pdf_do_wb_aberto(wb, pasta_saida, nome_base, ignorar_abas=("nf",), ape
         vis_orig[sh.name] = sh.api.Visible
         if nome_norm in {x.strip().lower() for x in ignorar_abas}:
             sh.api.Visible = False  # oculta NF
+
+    ajustar_layout_todas_abas_visiveis_no_wb(wb, ignorar_abas=ignorar_abas)
 
     try:
         # 3) ativa uma aba visível (Excel odeia export sem sheet ativa)
@@ -874,8 +1120,8 @@ def data_online():
 def validar_licenca():
     hoje_utc, hoje_local = data_online()
 
-    # 🔥 define uma data fixa de expiração: 5 de janeiro de 2026
-    limite = datetime(2026, 2, 25, tzinfo=timezone.utc)
+    # 🔥 define uma data fixa de expiração: 30 de março de 2026
+    limite = datetime(2026, 3, 30, tzinfo=timezone.utc)
 
     if hoje_utc > limite:
         sys.exit("⛔ Licença expirada")

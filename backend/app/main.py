@@ -19,7 +19,7 @@ from backend.app import (
     FaturamentoDeAcordo,
     FaturamentoSaoSebastiao,
     GerarRelatorio,
-    ProgramaCopiarPeriodo,
+    FazerPonto,
     ProgramaRemoverPeriodo,
     CriarPasta,
     validar_licenca,
@@ -69,7 +69,7 @@ def _executar_acao(indice: int) -> dict:
         FaturamentoDeAcordo().executar()
         return {"msg": "De Acordo finalizado"}
     if indice == 4:
-        ProgramaCopiarPeriodo(debug=True).executar()
+        FazerPonto(debug=True).executar()
         return {"msg": "Fazer Ponto finalizado"}
     if indice == 5:
         ProgramaRemoverPeriodo(debug=True).executar()

@@ -1,4 +1,5 @@
 from yuta_helpers import *
+import calendar
 from .email_rascunho import criar_rascunho_email_cliente
 from .criar_pasta import CriarPasta
 
@@ -26,11 +27,12 @@ class FaturamentoSaoSebastiao:
     # ==================================================
     # INIT
     # ==================================================
-    def __init__(self):
+    def __init__(self, usuario_nome: str | None = None):
         self.caminhos_pdfs: list[Path] = []
         self.paginas_texto: list[dict] = []   # [{pdf, page, texto}]
         self.texto_pdf: str = ""
         self.dados: dict[str, float] = {}
+        self.usuario_nome = (usuario_nome or "").strip()
 
     # ==================================================
     # UTIL: NORMALIZAÇÃO
@@ -971,7 +973,9 @@ class FaturamentoSaoSebastiao:
             pasta = self.caminhos_pdfs[0].parent
             navio = obter_nome_navio(pasta, None)
             nd = obter_dn_da_pasta(pasta)
-            cliente = pasta.parent.name.strip()
+            cliente_pasta = pasta.parent.name.strip()
+            cliente_id, porto_id = self.identificar_cliente_e_porto()
+            cliente = self._cliente_coluna_f_controle(cliente_id, porto_id, cliente_pasta)
             
             # Obter data atual
             from datetime import datetime
@@ -989,8 +993,14 @@ class FaturamentoSaoSebastiao:
                 eta = ""
                 etb = ""
             
-            # Buscar valor de COSTS no REPORT VIGIA
-            mmo = self._buscar_costs_report(wb)
+            # Buscar valores do REPORT VIGIA para preencher K/L no controle
+            usar_mmo = self._cliente_usa_mmo(cliente)
+            valores_report = self._buscar_costs_report(wb, return_all=True)
+            valor_costs = valores_report.get("COSTS", "")
+            valor_mmo = valores_report.get("MMO", "")
+
+            valor_k = valor_costs or valor_mmo
+            valor_l = valor_mmo if usar_mmo else None
             
             # ✅ Abrir workbook de controle uma única vez
             criar_pasta = CriarPasta()
@@ -1008,12 +1018,13 @@ class FaturamentoSaoSebastiao:
                     data=data_hoje,
                     eta=eta if eta else "",
                     etb=etb if etb else "",
-                    mmo=mmo,
+                    mmo=valor_k,
+                    mmo_extra=valor_l,
                     wb_externo=wb_controle
                 )
                 
                 # ✅ Salvar apenas uma vez
-                wb_controle.save(caminho_planilha)
+                criar_pasta.salvar_planilha_com_retry(wb_controle, caminho_planilha)
                 print("✅ Planilha de controle atualizada")
             finally:
                 # Fechar workbook
@@ -1021,15 +1032,37 @@ class FaturamentoSaoSebastiao:
             
         except Exception as e:
             print(f"⚠️ Erro ao atualizar planilha de controle: {e}")
-    
-    def _buscar_costs_report(self, wb):
+
+    def _cliente_coluna_f_controle(self, cliente_id: str, porto_id: str, cliente_padrao: str) -> str:
         """
-        Busca o valor de COSTS no REPORT VIGIA dinamicamente.
-        O valor do COSTS SEMPRE está na coluna G, independente de onde está a palavra 'COSTS'.
+        Define o nome padronizado para a coluna F da planilha de controle
+        nos fluxos de São Sebastião.
+        """
+        if porto_id in {"PSS", "SAO SEBASTIAO"}:
+            mapa_pss = {
+                "WILSON SONS": "WILSON (PSS)",
+                "AQUARIUS": "AQUARIUS (PSS)",
+                "SEA SIDE": "SEA SIDE (PSS)",
+            }
+            return mapa_pss.get(cliente_id, cliente_padrao)
+
+        return cliente_padrao
+
+    def _normalizar_cliente(self, cliente: str) -> str:
+        texto = unicodedata.normalize("NFKD", str(cliente or ""))
+        texto = "".join(ch for ch in texto if not unicodedata.combining(ch))
+        return texto.upper()
+
+    def _cliente_usa_mmo(self, cliente: str) -> bool:
+        cliente_norm = self._normalizar_cliente(cliente).replace(" ", "")
+        return "NORTHSTAR" in cliente_norm or "CARGILL" in cliente_norm
+    
+    def _buscar_costs_report(self, wb, desired_label: str | None = None, return_all: bool = False):
+        """
+        Busca valores de COSTS/MMO no REPORT VIGIA dinamicamente.
+        O valor fica na mesma linha do rótulo, podendo variar entre colunas F/G/H.
         Retorna formato brasileiro sem R$: 16.227,85
         """
-        import re
-        
         try:
             # Encontra aba REPORT VIGIA
             ws_report = None
@@ -1040,9 +1073,72 @@ class FaturamentoSaoSebastiao:
             
             if not ws_report:
                 return ""
+
+            valores_report = {"COSTS": None, "MMO": None}
+
+            def _normalizar_valor(valor_celula):
+                if valor_celula in (None, ""):
+                    return None
+                try:
+                    if isinstance(valor_celula, (int, float)):
+                        return f"{float(valor_celula):.2f}".replace(".", ",")
+                    texto = str(valor_celula).replace("R$", "").replace(" ", "").strip()
+                    if not texto:
+                        return None
+                    if "," in texto:
+                        texto = texto.replace(".", "").replace(",", ".")
+                    valor_num = float(texto)
+                    return f"{valor_num:.2f}".replace(".", ",")
+                except Exception:
+                    return None
+
+            def _valor_da_linha(linha: int, col_rotulo: str):
+                candidatos = ["F", "G", "H"]
+                if col_rotulo in ["C", "D", "E", "F", "G"]:
+                    prox_col = chr(ord(col_rotulo) + 1)
+                    if prox_col not in candidatos:
+                        candidatos.insert(0, prox_col)
+
+                for col in candidatos:
+                    try:
+                        cel = ws_report.range(f"{col}{linha}")
+                        valor = _normalizar_valor(cel.value)
+                        if valor:
+                            return valor
+                        try:
+                            valor_texto = cel.api.Text
+                        except Exception:
+                            valor_texto = None
+                        valor = _normalizar_valor(valor_texto)
+                        if valor:
+                            return valor
+                    except Exception:
+                        continue
+                return None
+
+            def _capturar_por_rotulo(rotulo):
+                for linha in range(1, 301):
+                    for col_letra in ["C", "D", "E", "F", "G", "H"]:
+                        try:
+                            txt = ws_report.range(f"{col_letra}{linha}").value
+                            if not isinstance(txt, str):
+                                continue
+                            if rotulo not in txt.upper().strip():
+                                continue
+
+                            resultado = _valor_da_linha(linha, col_letra)
+                            if resultado:
+                                print(f"🔎 REPORT {rotulo}: rótulo em {col_letra}{linha}, valor={resultado}")
+                                return resultado
+                        except Exception:
+                            continue
+                return None
+
+            valores_report["COSTS"] = _capturar_por_rotulo("COSTS")
+            valores_report["MMO"] = _capturar_por_rotulo("MMO")
             
-            # Procura em um range amplo (linhas 1 a 150, todas as colunas)
-            for linha in range(1, 151):
+            # Fallback
+            for linha in range(1, 301):
                 for col_letra in ['C', 'D', 'E', 'F', 'G', 'H']:
                     try:
                         valor_celula = ws_report.range(f"{col_letra}{linha}").value
@@ -1052,37 +1148,32 @@ class FaturamentoSaoSebastiao:
                             texto_upper = valor_celula.upper().strip()
                             
                             if "COSTS" in texto_upper or "MMO" in texto_upper:
-                                # ✅ SEMPRE busca o valor na coluna G da MESMA linha
+                                # Busca valor na mesma linha do rótulo
                                 try:
-                                    celula_g = ws_report.range(f"G{linha}")
-                                    
-                                    # Pega o TEXTO formatado (como aparece no Excel)
-                                    valor_texto = None
-                                    try:
-                                        valor_texto = celula_g.api.Text
-                                    except:
-                                        valor_texto = str(celula_g.value) if celula_g.value else None
-                                    
-                                    if valor_texto and valor_texto.strip():
-                                        # Remove formatação e converte
-                                        try:
-                                            valor_limpo = valor_texto.replace("R$", "").replace(" ", "").strip()
-                                            # Se já está no formato brasileiro (1.234,56), converte
-                                            if "," in valor_limpo:
-                                                valor_limpo = valor_limpo.replace(".", "").replace(",", ".")
-                                            valor_num = float(valor_limpo)
-                                            
-                                            # Retorna APENAS com vírgula decimal (sem ponto de milhar)
-                                            resultado = f"{valor_num:.2f}".replace(".", ",")
-                                            return resultado
-                                        except Exception as e:
-                                            # Se já estiver formatado, remove R$ e pontos
-                                            texto_limpo = valor_texto.replace("R$", "").replace(".", "").strip()
-                                            return texto_limpo
+                                    resultado = _valor_da_linha(linha, col_letra)
+                                    if resultado:
+                                        if "MMO" in texto_upper and valores_report["MMO"] is None:
+                                            valores_report["MMO"] = resultado
+                                        if "COSTS" in texto_upper and valores_report["COSTS"] is None:
+                                            valores_report["COSTS"] = resultado
                                 except:
                                     pass
                     except:
                         continue
+
+            if return_all:
+                return {
+                    "COSTS": valores_report["COSTS"] or "",
+                    "MMO": valores_report["MMO"] or "",
+                }
+
+            if desired_label:
+                chave = desired_label.strip().upper()
+                if chave in valores_report:
+                    return valores_report[chave] or ""
+                return ""
+
+            return valores_report["COSTS"] or valores_report["MMO"] or ""
             
             return ""
             
@@ -1256,7 +1347,9 @@ class FaturamentoSaoSebastiao:
 
         for i, (d, p) in enumerate(periodos_com_data):
             linha = linha_base + i
-            aba.range(f"C{linha}").value = self._fmt_data_excel(d)
+            celula_data = aba.range(f"C{linha}")
+            celula_data.value = self._fmt_data_excel(d)
+            celula_data.number_format = "[$-en-US]mmmm d, aaaa"
             aba.range(f"E{linha}").value = p
 
         # ✅ status pelo nome do navio (o "nome" com (ATRACADO)/(AO LARGO))
@@ -1654,6 +1747,7 @@ class FaturamentoSaoSebastiao:
                     anexos=anexos,
                     dn=str(nd),
                     navio=navio,
+                    usuario_nome=self.usuario_nome,
                 )
                 print("✅ Rascunho do Outlook criado com anexos.")
             except Exception as e:
@@ -1711,6 +1805,11 @@ class FaturamentoSaoSebastiao:
             vis_orig[sh.name] = sh.api.Visible
             if sh.name.strip().lower() == "nf":
                 sh.api.Visible = False
+
+        try:
+            ajustar_layout_abas_estrategicas_no_wb(wb)
+        except Exception:
+            pass
 
         try:
             wb.api.ExportAsFixedFormat(

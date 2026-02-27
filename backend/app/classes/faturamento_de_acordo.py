@@ -2,6 +2,7 @@ from pathlib import Path
 from tempfile import gettempdir
 
 from yuta_helpers import (
+    ajustar_layout_front_vigia,
     abrir_workbooks_de_acordo,
     escrever_de_acordo_nf,
     fechar_workbooks,
@@ -20,6 +21,9 @@ from .email_rascunho import criar_rascunho_email_cliente
 
 
 class FaturamentoDeAcordo:
+
+    def __init__(self, usuario_nome: str | None = None):
+        self.usuario_nome = (usuario_nome or "").strip()
 
     @staticmethod
     def limpar_celula_segura(ws, endereco):
@@ -131,6 +135,10 @@ class FaturamentoDeAcordo:
             ws_front.range("C26").value = f"DE ACORDO ( M/V {nome_navio} )"
             ws_front.range("C39").value = f" Santos, {data_extenso}"
 
+            cliente_front = str(ws_front.range("C9").value or "").upper()
+            if self.usuario_nome and "NORTH STAR" not in cliente_front:
+                ws_front.range("C42").value = f"   {self.usuario_nome}"
+
             # 🔧 Regras por cliente
             self.aplicar_regras_cliente(ws_front)
             
@@ -174,6 +182,7 @@ class FaturamentoDeAcordo:
                     anexos=anexos,
                     dn=str(dn),
                     navio=nome_navio,
+                    usuario_nome=self.usuario_nome,
                 )
                 print("✅ Rascunho do Outlook criado com anexos.")
             except Exception as e:
@@ -194,20 +203,16 @@ class FaturamentoDeAcordo:
             from datetime import datetime
             data_hoje = datetime.now().strftime("%d/%m/%Y")
             
-            # ✅ Ler valores da FRONT VIGIA
-            # Tenta E36 primeiro (Delta), depois E37 (Unimar)
-            valor_total = ws_front.range("E36").value
-            celula_usada = "E36"
-            
-            if valor_total is None:
-                valor_total = ws_front.range("E37").value
-                celula_usada = "E37"
+            # ✅ Ler valor da FRONT VIGIA para coluna K no controle
+            # Regra DE ACORDO: usar G26
+            valor_total = ws_front.range("G26").value
+            celula_usada = "G26"
             
             print(f"📊 Lendo valores da FRONT VIGIA:")
             print(f"   {celula_usada} (Valor Total): {valor_total} (tipo: {type(valor_total)})")
             
             if valor_total is None:
-                print(f"⚠️ AVISO: E36 e E37 estão vazios! Verifique a planilha FRONT VIGIA.")
+                print(f"⚠️ AVISO: G26 está vazio! Verifique a planilha FRONT VIGIA.")
             
             # ✅ Abrir workbook de controle uma única vez
             criar_pasta = CriarPasta()
@@ -226,14 +231,14 @@ class FaturamentoDeAcordo:
                     data=data_hoje,
                     eta=data_hoje,  # Mesmo dia
                     etb=data_hoje,  # Mesmo dia
-                    mmo=valor_total,  # Valor total de E37 vai para coluna K
+                    mmo=valor_total,  # Valor de G26 vai para coluna K
                     wb_externo=wb_controle,
                     iss_formula=True,  # Cria fórmula =K{linha}*5% na coluna O
                     limpar_formulas_adm_cliente=True  # Limpa colunas N e P (ADM % e CLIENTE %)
                 )
                 
                 # ✅ Salvar apenas uma vez
-                wb_controle.save(caminho_planilha)
+                criar_pasta.salvar_planilha_com_retry(wb_controle, caminho_planilha)
                 print("✅ Planilha de controle atualizada com sucesso!")
             finally:
                 # Fechar workbook
@@ -259,5 +264,6 @@ class FaturamentoDeAcordo:
         if caminho_pdf.exists():
             caminho_pdf.unlink()
 
+        ajustar_layout_front_vigia(ws_front)
         ws_front.api.ExportAsFixedFormat(Type=0, Filename=str(caminho_pdf))
         return caminho_pdf

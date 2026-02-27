@@ -9,9 +9,10 @@ from yuta_helpers import (
 )
 
 
-class ProgramaCopiarPeriodo:
+class FazerPonto:
     def __init__(self, debug=False):
         self.debug = debug
+        self.caminho_navio = None
         self.app = None
         self.wb = None
         self.wb_navio = None
@@ -36,6 +37,7 @@ class ProgramaCopiarPeriodo:
         "00h": ["00h", "18h"]
     }
     BLOCOS = {"06h": 1, "12h": 1, "18h": 2, "00h": 2}
+    ORDEM_PERIODOS = {"00h": 0, "06h": 1, "12h": 2, "18h": 3}
 
 
     # ---------------------------
@@ -44,10 +46,12 @@ class ProgramaCopiarPeriodo:
 
 
 
-    def abrir_arquivo_navio(self):
-        caminho = selecionar_arquivo_navio()
+    def abrir_arquivo_navio(self, caminho=None):
+        caminho = caminho or self.caminho_navio or selecionar_arquivo_navio()
         if not caminho:
             raise FileNotFoundError("Arquivo do NAVIO não selecionado")
+
+        self.caminho_navio = caminho
 
         self.app = xw.App(visible=False, add_book=False)
         self.wb_navio = self.app.books.open(caminho)
@@ -161,6 +165,46 @@ class ProgramaCopiarPeriodo:
                 raise Exception("❌ Fim da planilha sem encontrar 'Total' do dia")
             i += 1
 
+    def encontrar_linha_periodo(self, data, periodo):
+        linha_data = self.encontrar_linha_data(data)
+        linha_total_dia = self.encontrar_total_data(linha_data)
+
+        if periodo == "00h":
+            linha_acima = linha_data - 1
+            if linha_acima > 0:
+                valor_c = self.ws.range(f"C{linha_acima}").value
+                if isinstance(valor_c, str):
+                    p = self.normalizar_periodo(valor_c)
+                    if p == "00h":
+                        return linha_acima
+
+        for i in range(linha_data, linha_total_dia):
+            valor_c = self.ws.range(f"C{i}").value
+            if not isinstance(valor_c, str):
+                continue
+            p = self.normalizar_periodo(valor_c)
+            if p == periodo:
+                return i
+
+        return None
+
+    def encontrar_linha_insercao_periodo(self, linha_data, linha_total_dia, periodo):
+        ordem_alvo = self.ORDEM_PERIODOS.get(periodo)
+        if ordem_alvo is None:
+            return linha_total_dia
+
+        for i in range(linha_data, linha_total_dia):
+            valor_c = self.ws.range(f"C{i}").value
+            if not isinstance(valor_c, str):
+                continue
+            p = self.normalizar_periodo(valor_c)
+            if not p:
+                continue
+            if self.ORDEM_PERIODOS.get(p, 999) > ordem_alvo:
+                return i
+
+        return linha_total_dia
+
     # ---------------------------
     # Buscar modelo inteligente
     # ---------------------------
@@ -218,20 +262,23 @@ class ProgramaCopiarPeriodo:
         if resultado:
             return resultado
 
-        # 2️⃣ Outros dias
-        for offset in range(1, len(datas_ordenadas)):
-            for novo_idx in (idx - offset, idx + offset):
-                if 0 <= novo_idx < len(datas_ordenadas):
-                    data = datas_ordenadas[novo_idx]
+        # 2️⃣ Outros dias (duas passagens)
+        # Passagem 1: somente período exato
+        # Passagem 2: permitir equivalente (ex.: 00h <-> 18h)
+        for aceitar_equivalente in (False, True):
+            for offset in range(1, len(datas_ordenadas)):
+                for novo_idx in (idx - offset, idx + offset):
+                    if 0 <= novo_idx < len(datas_ordenadas):
+                        data = datas_ordenadas[novo_idx]
 
-                    if self.is_dia_bloqueado(data):
-                        if self.debug:
-                            print(f"⛔ Pulando data bloqueada: {data}")
-                        continue
+                        if self.is_dia_bloqueado(data):
+                            if self.debug:
+                                print(f"⛔ Pulando data bloqueada: {data}")
+                            continue
 
-                    resultado = procurar_em_data(data, aceitar_equivalente=False)
-                    if resultado:
-                        return resultado
+                        resultado = procurar_em_data(data, aceitar_equivalente=aceitar_equivalente)
+                        if resultado:
+                            return resultado
 
         raise Exception(
             f"Nenhum modelo encontrado para o período '{periodo}' "
@@ -248,11 +295,18 @@ class ProgramaCopiarPeriodo:
             print(f"⛔ {data} é domingo ou feriado — período não será criado")
             return
 
+        if self.encontrar_linha_periodo(data, periodo):
+            print(f"ℹ Período {periodo} já existe em {data} — nada a criar")
+            return
+
         # ⚠️ CHAMAR APENAS UMA VEZ
         linha_modelo, data_modelo = self.encontrar_modelo_periodo(data, periodo)
 
         linha_data = self.encontrar_linha_data(data)
         linha_total_dia = self.encontrar_total_data(linha_data)
+        linha_insercao = self.encontrar_linha_insercao_periodo(linha_data, linha_total_dia, periodo)
+
+        valor_data_linha_data = self.ws.range((linha_data, 2)).value
 
         print(
             f"\n✅ Executando FAZER PONTO no NAVIO - "
@@ -260,19 +314,24 @@ class ProgramaCopiarPeriodo:
             f"(modelo: {data_modelo})"
         )
 
-        self.ws.api.Rows(linha_total_dia).Insert()
+        self.ws.api.Rows(linha_insercao).Insert()
 
-        if linha_modelo >= linha_total_dia:
+        if linha_modelo >= linha_insercao:
             linha_modelo += 1
 
         self.ws.api.Rows(linha_modelo).Copy()
-        self.ws.api.Rows(linha_total_dia).PasteSpecial(-4163)
+        self.ws.api.Rows(linha_insercao).PasteSpecial(-4163)
 
-        self.ws.api.Rows(linha_total_dia).Font.Bold = True
-        self.ws.range((linha_total_dia, 3)).value = periodo
+        self.ws.api.Rows(linha_insercao).Font.Bold = True
+        self.ws.range((linha_insercao, 3)).value = periodo
 
-        linha_nova = linha_total_dia
-        linha_total_dia += 1
+        if linha_insercao == linha_data and valor_data_linha_data:
+            self.ws.range((linha_insercao, 2)).value = valor_data_linha_data
+            self.ws.range((linha_insercao + 1, 2)).value = None
+
+        linha_nova = linha_insercao
+        if linha_insercao <= linha_total_dia:
+            linha_total_dia += 1
 
         self.somar_linha_no_total_do_dia(linha_nova, linha_total_dia)
         self.somar_linha_no_total_geral(linha_nova)
@@ -325,14 +384,26 @@ class ProgramaCopiarPeriodo:
     # Executar
     # ---------------------------
 
-    def executar(self, usar_arquivo_aberto=False):
+    def executar(self, usar_arquivo_aberto=False, selection=None):
         try:
+            selection = selection or {}
+            data_selecionada = selection.get("data")
+            periodo_selecionado = selection.get("periodo")
+            caminho_navio = selection.get("caminho_navio")
+
             if not usar_arquivo_aberto or not self.ws:
-                self.abrir_arquivo_navio()
+                self.abrir_arquivo_navio(caminho=caminho_navio)
 
             self.carregar_datas()
-            data = self.escolher_data()
-            periodo = self.escolher_periodo()
+
+            data = data_selecionada if data_selecionada else self.escolher_data()
+            if data not in self.datas:
+                raise Exception(f"Data inválida para este arquivo: {data}")
+
+            periodo = periodo_selecionado if periodo_selecionado else self.escolher_periodo()
+            if periodo not in self.MAPA_PERIODOS.values():
+                raise Exception(f"Período inválido: {periodo}")
+
             self.copiar_colar(data, periodo)
 
             self.salvar()
@@ -353,3 +424,6 @@ class ProgramaCopiarPeriodo:
 
         self.wb.save()
         print("💾 Arquivo NAVIO salvo com sucesso")
+
+
+ProgramaCopiarPeriodo = FazerPonto

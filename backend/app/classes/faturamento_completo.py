@@ -1,19 +1,25 @@
 import re
 import shutil
 import tempfile
+import time
 import unicodedata
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+import comtypes.client
 import pdfplumber
+from num2words import num2words
 
 from yuta_helpers import (
+    ajustar_layout_abas_estrategicas_no_wb,
+    ajustar_layout_report_vigia,
     abrir_workbooks,
     copiar_para_temp_xlwings,
     escrever_nf_faturamento_completo,
     extrair_identidade_navio,
     fechar_workbooks,
     gerar_pdf_faturamento_completo,
+    obter_modelo_word_cargonave,
     obter_pasta_faturamentos,
     openpyxl,
 )
@@ -22,7 +28,7 @@ from .email_rascunho import criar_rascunho_email_cliente
 
 
 class FaturamentoCompleto:
-    def __init__(self, g_logic=1):
+    def __init__(self, g_logic=1, usuario_nome: str | None = None):
         self.app = None
         self.wb1 = None
         self.wb2 = None
@@ -34,6 +40,7 @@ class FaturamentoCompleto:
         self.dn = None
         self.pdf_path = None
         self.pasta_faturamentos = None  # <--- GUARDA PASTA AQUI
+        self.usuario_nome = (usuario_nome or "").strip()
 
 
 
@@ -120,12 +127,21 @@ class FaturamentoCompleto:
                 pasta_navio_rede, self.dn, self.nome_navio
             )
 
+            # ✅ Atualizar planilha de controle somente após finalizar faturamento/report
+            self.atualizar_planilha_controle()
+
             nome_cliente = pasta_navio_rede.parent.name.strip()
             caminho_report = (
                 pasta_navio_rede
                 / f"REPORT VIGIA - DN {self.dn} - MV {self.nome_navio}.pdf"
             )
-            if nome_cliente.strip().upper() == "ROCHAMAR":
+            nome_cliente_norm = nome_cliente.strip().upper()
+            if nome_cliente_norm == "CARGONAVE":
+                caminho_recibo_pdf = self.pasta_saida_final / f"RECIBO - DN {self.dn} - MV {self.nome_navio}.pdf"
+                anexos = [caminho_recibo_pdf] if caminho_recibo_pdf.exists() else []
+                if not anexos:
+                    print("⚠️ Recibo PDF da CARGONAVE não encontrado para anexar no e-mail.")
+            elif nome_cliente_norm == "ROCHAMAR":
                 anexos = [caminho_report] if caminho_report.exists() else []
             else:
                 anexos = [caminho_pdf]  # ✅ Removido Excel dos anexos
@@ -159,6 +175,7 @@ class FaturamentoCompleto:
                     atracacao_fim=atracacao_fim,
                     costs=costs,
                     adm=adm,
+                    usuario_nome=self.usuario_nome,
                 )
                 print("✅ Rascunho do Outlook criado com anexos.")
             except Exception as e:
@@ -318,6 +335,11 @@ class FaturamentoCompleto:
                 break
 
         try:
+            ajustar_layout_abas_estrategicas_no_wb(self.wb2)
+        except Exception:
+            pass
+
+        try:
             self.wb2.api.ExportAsFixedFormat(
                 Type=0,
                 Filename=str(caminho_pdf),
@@ -430,9 +452,6 @@ class FaturamentoCompleto:
         self.gerar_planilha_calculo_conesul()
 
         print("✅ REPORT VIGIA atualizado com sucesso!")
-        
-        # ✅ Atualizar planilha de controle APÓS tudo estar pronto
-        self.atualizar_planilha_controle()
 
 
     def escrever_cn_credit_note(self, texto_cn):
@@ -523,6 +542,14 @@ class FaturamentoCompleto:
                 f"  Santos, {hoje.day} de {meses[hoje.month]} de {hoje.year}"
             )
 
+            try:
+                nome_cliente = self.pasta_saida_final.parent.name.strip().upper()
+            except Exception:
+                nome_cliente = ""
+
+            if self.usuario_nome and "NORTH STAR" not in nome_cliente:
+                self.ws_front.range("C42").value = f"  {self.usuario_nome}"
+
             print("✅ FRONT VIGIA preenchido com sucesso!")
 
         except Exception as e:
@@ -537,6 +564,13 @@ class FaturamentoCompleto:
         try:
             # Obter nome do cliente da pasta
             cliente = self.pasta_saida_final.parent.name.strip()
+
+            # Garante que os cálculos finais do REPORT estejam atualizados
+            try:
+                self.wb2.app.calculate()
+                self.wb2.app.calculate()
+            except Exception:
+                pass
             
             # Obter data atual
             data_hoje = datetime.now().strftime("%d/%m/%Y")
@@ -548,8 +582,18 @@ class FaturamentoCompleto:
             eta = data_min.strftime("%d/%m/%Y") if data_min else ""
             etb = data_max.strftime("%d/%m/%Y") if data_max else ""
             
-            # Buscar valor de COSTS no REPORT VIGIA
-            mmo = self._buscar_costs_report()
+            # Buscar valores do REPORT VIGIA para preencher K/L no controle:
+            # - K: COSTS (despesas)
+            # - L: MMO (somente clientes específicos)
+            usar_mmo = self._cliente_usa_mmo(cliente)
+            usar_adiantamento = self._cliente_usa_adiantamento(cliente)
+            valores_report = self._buscar_costs_report(return_all=True)
+            valor_costs = valores_report.get("COSTS", "")
+            valor_mmo = valores_report.get("MMO", "")
+
+            valor_k = valor_costs or valor_mmo
+            valor_l = valor_mmo if usar_mmo else None
+            valor_adiantamento = self.obter_valor_cargonave() if usar_adiantamento else None
             
             # ✅ Abrir workbook de controle uma única vez
             criar_pasta = CriarPasta()
@@ -566,12 +610,14 @@ class FaturamentoCompleto:
                     data=data_hoje,
                     eta=eta,
                     etb=etb,
-                    mmo=mmo,
+                    mmo=valor_k,
+                    mmo_extra=valor_l,
+                    adiantamento=valor_adiantamento,
                     wb_externo=wb_controle
                 )
                 
                 # ✅ Salvar apenas uma vez
-                wb_controle.save(caminho_planilha)
+                criar_pasta.salvar_planilha_com_retry(wb_controle, caminho_planilha)
                 print("✅ Planilha de controle atualizada")
             finally:
                 # Fechar workbook
@@ -579,20 +625,96 @@ class FaturamentoCompleto:
             
         except Exception as e:
             print(f"⚠️ Erro ao atualizar planilha de controle: {e}")
+
+    def _normalizar_cliente(self, cliente: str) -> str:
+        texto = unicodedata.normalize("NFKD", str(cliente or ""))
+        texto = "".join(ch for ch in texto if not unicodedata.combining(ch))
+        return texto.upper()
+
+    def _cliente_usa_mmo(self, cliente: str) -> bool:
+        cliente_norm = self._normalizar_cliente(cliente).replace(" ", "")
+        return "NORTHSTAR" in cliente_norm or "CARGILL" in cliente_norm
+
+    def _cliente_usa_adiantamento(self, cliente: str) -> bool:
+        cliente_norm = self._normalizar_cliente(cliente).replace(" ", "")
+        return "CARGONAVE" in cliente_norm
     
-    def _buscar_costs_report(self):
+    def _buscar_costs_report(self, prefer_mmo: bool = False, desired_label: str | None = None, return_all: bool = False):
         """
-        Busca o valor de COSTS no REPORT VIGIA dinamicamente.
-        O valor do COSTS SEMPRE está na coluna G, independente de onde está a palavra 'COSTS'.
+        Busca valores de COSTS/MMO no REPORT VIGIA dinamicamente.
+        O valor fica na mesma linha do rótulo, podendo variar entre colunas F/G/H.
         Retorna formato brasileiro sem R$: 16.227,85
         """
-        import re
-        
         try:
             ws_report = self.wb2.sheets["REPORT VIGIA"]
             
-            # Procura em um range amplo (linhas 1 a 150, todas as colunas)
-            for linha in range(1, 151):
+            valores_report = {"COSTS": None, "MMO": None}
+
+            def _normalizar_valor(valor_celula):
+                if valor_celula in (None, ""):
+                    return None
+                try:
+                    if isinstance(valor_celula, (int, float)):
+                        return f"{float(valor_celula):.2f}".replace(".", ",")
+                    texto = str(valor_celula).replace("R$", "").replace(" ", "").strip()
+                    if not texto:
+                        return None
+                    if "," in texto:
+                        texto = texto.replace(".", "").replace(",", ".")
+                    valor_num = float(texto)
+                    return f"{valor_num:.2f}".replace(".", ",")
+                except Exception:
+                    return None
+
+            def _valor_da_linha(linha: int, col_rotulo: str):
+                # Tenta primeiro as colunas mais comuns de valor e depois a célula à direita do rótulo
+                candidatos = ["F", "G", "H"]
+                if col_rotulo in ["C", "D", "E", "F", "G"]:
+                    prox_col = chr(ord(col_rotulo) + 1)
+                    if prox_col not in candidatos:
+                        candidatos.insert(0, prox_col)
+
+                for col in candidatos:
+                    try:
+                        cel = ws_report.range(f"{col}{linha}")
+                        valor = _normalizar_valor(cel.value)
+                        if valor:
+                            return valor
+                        try:
+                            valor_texto = cel.api.Text
+                        except Exception:
+                            valor_texto = None
+                        valor = _normalizar_valor(valor_texto)
+                        if valor:
+                            return valor
+                    except Exception:
+                        continue
+                return None
+
+            def _capturar_por_rotulo(rotulo):
+                for linha in range(1, 301):
+                    for col_letra in ["C", "D", "E", "F", "G", "H"]:
+                        try:
+                            txt = ws_report.range(f"{col_letra}{linha}").value
+                            if not isinstance(txt, str):
+                                continue
+                            if rotulo not in txt.upper().strip():
+                                continue
+
+                            resultado = _valor_da_linha(linha, col_letra)
+                            if resultado:
+                                print(f"🔎 REPORT {rotulo}: rótulo em {col_letra}{linha}, valor={resultado}")
+                                return resultado
+                        except Exception:
+                            continue
+                return None
+
+            # 1) Busca direta por rótulo (mais confiável)
+            valores_report["COSTS"] = _capturar_por_rotulo("COSTS")
+            valores_report["MMO"] = _capturar_por_rotulo("MMO")
+
+            # 2) Fallback: varredura ampla (mantém compatibilidade)
+            for linha in range(1, 301):
                 for col_letra in ['C', 'D', 'E', 'F', 'G', 'H']:
                     try:
                         valor_celula = ws_report.range(f"{col_letra}{linha}").value
@@ -602,39 +724,39 @@ class FaturamentoCompleto:
                             texto_upper = valor_celula.upper().strip()
                             
                             if "COSTS" in texto_upper or "MMO" in texto_upper:
-                                # ✅ SEMPRE busca o valor na coluna G da MESMA linha
+                                # Busca o valor na mesma linha do rótulo
                                 try:
-                                    celula_g = ws_report.range(f"G{linha}")
-                                    
-                                    # Pega o TEXTO formatado (como aparece no Excel)
-                                    valor_texto = None
-                                    try:
-                                        valor_texto = celula_g.api.Text
-                                    except:
-                                        valor_texto = str(celula_g.value) if celula_g.value else None
-                                    
-                                    if valor_texto and valor_texto.strip():
-                                        # Remove formatação e converte
-                                        try:
-                                            valor_limpo = valor_texto.replace("R$", "").replace(" ", "").strip()
-                                            # Se já está no formato brasileiro (1.234,56), converte
-                                            if "," in valor_limpo:
-                                                valor_limpo = valor_limpo.replace(".", "").replace(",", ".")
-                                            valor_num = float(valor_limpo)
-                                            
-                                            # Retorna APENAS com vírgula decimal (sem ponto de milhar)
-                                            resultado = f"{valor_num:.2f}".replace(".", ",")
-                                            return resultado
-                                        except Exception as e:
-                                            # Se já estiver formatado, remove R$ e pontos
-                                            texto_limpo = valor_texto.replace("R$", "").replace(".", "").strip()
-                                            return texto_limpo
+                                    resultado = _valor_da_linha(linha, col_letra)
+                                    if resultado:
+                                        if "MMO" in texto_upper and valores_report["MMO"] is None:
+                                            valores_report["MMO"] = resultado
+                                            print(f"🔎 REPORT MMO (fallback): linha {linha}, valor={resultado}")
+                                        if "COSTS" in texto_upper and valores_report["COSTS"] is None:
+                                            valores_report["COSTS"] = resultado
+                                            print(f"🔎 REPORT COSTS (fallback): linha {linha}, valor={resultado}")
                                 except:
                                     pass
                     except:
                         continue
-            
-            return ""
+
+            if not valores_report["COSTS"] and not valores_report["MMO"]:
+                print("⚠️ REPORT VIGIA: não encontrei valores de COSTS/MMO nas linhas 1-300")
+
+            if return_all:
+                return {
+                    "COSTS": valores_report["COSTS"] or "",
+                    "MMO": valores_report["MMO"] or "",
+                }
+
+            if desired_label:
+                chave = desired_label.strip().upper()
+                if chave in valores_report:
+                    return valores_report[chave] or ""
+                return ""
+
+            if prefer_mmo:
+                return valores_report["MMO"] or valores_report["COSTS"] or ""
+            return valores_report["COSTS"] or valores_report["MMO"] or ""
             
         except Exception as e:
             print(f"❌ Erro ao buscar COSTS: {e}")
@@ -924,7 +1046,9 @@ class FaturamentoCompleto:
             ciclo = ws_report.range(f"E{linha}").value
             if ciclo in (None, ""):
                 break
-            ws_report.range(f"C{linha}").value = data_atual
+            celula_data = ws_report.range(f"C{linha}")
+            celula_data.value = data_atual
+            celula_data.number_format = "[$-en-US]mmmm d, aaaa"
             if isinstance(ciclo, str) and ciclo.strip().lower() == "00x06":
                 data_atual += timedelta(days=1)
         return periodos
@@ -938,6 +1062,13 @@ class FaturamentoCompleto:
 
     def gerar_pdf_report_vigia_separado(self, pasta_navio: Path, dn: str, navio: str):
         ws_report = self.wb2.sheets["REPORT VIGIA"]
+
+        try:
+            self.wb2.app.calculate()
+        except Exception:
+            pass
+
+        ajustar_layout_report_vigia(ws_report)
 
         nome_pdf = f"REPORT VIGIA - DN {dn} - MV {navio}.pdf"
         caminho_pdf = pasta_navio / nome_pdf
@@ -1034,6 +1165,20 @@ class FaturamentoCompleto:
         word = None
         doc = None
 
+        def _com_retry(callable_fn, etapa: str, tentativas: int = 6, espera_base: float = 0.5):
+            for tentativa in range(1, tentativas + 1):
+                try:
+                    return callable_fn()
+                except Exception as e:
+                    msg = str(e)
+                    erro_chamado_ocupado = "-2147418111" in msg or "A chamada foi rejeitada pelo chamado" in msg
+                    if erro_chamado_ocupado and tentativa < tentativas:
+                        pausa = espera_base * tentativa
+                        print(f"⚠️ Word ocupado em '{etapa}'. Nova tentativa em {pausa:.1f}s ({tentativa}/{tentativas})")
+                        time.sleep(pausa)
+                        continue
+                    raise
+
         try:
             # ==========================
             # 🔒 TRAVA DE SEGURANÇA
@@ -1053,14 +1198,11 @@ class FaturamentoCompleto:
             # ==========================
             # 📄 MODELO WORD
             # ==========================
-            pasta_modelos = self.pasta_faturamentos / "CARGONAVE"
-            modelos = list(pasta_modelos.glob("RECIBO - YUTA.doc"))
-
-            if not modelos:
-                print(f"❌ Modelo Word não encontrado em {pasta_modelos}")
+            try:
+                modelo_word = obter_modelo_word_cargonave(self.pasta_faturamentos, "CARGONAVE")
+            except FileNotFoundError as e:
+                print(f"❌ {e}")
                 return
-
-            modelo_word = modelos[0]
 
             # ==========================
             # 📂 COPIAR PARA TEMP
@@ -1071,9 +1213,20 @@ class FaturamentoCompleto:
             # ==========================
             # 📝 ABRIR WORD
             # ==========================
-            word = comtypes.client.CreateObject("Word.Application")
+            word = _com_retry(
+                lambda: comtypes.client.CreateObject("Word.Application"),
+                "inicializar Word"
+            )
             word.Visible = False
-            doc = word.Documents.Open(str(temp_doc))
+            try:
+                word.DisplayAlerts = 0
+            except Exception:
+                pass
+
+            doc = _com_retry(
+                lambda: word.Documents.Open(str(temp_doc)),
+                "abrir modelo de recibo"
+            )
 
             # ==========================
             # 💰 VALOR
@@ -1123,15 +1276,15 @@ class FaturamentoCompleto:
             # 💾 SALVAR WORD + PDF
             # ==========================
             word_saida = self.pasta_saida_final / f"RECIBO - DN {self.dn} - MV {self.nome_navio}.doc"
-            doc.SaveAs(str(word_saida))
+            _com_retry(lambda: doc.SaveAs(str(word_saida)), "salvar Word")
             print(f"💾 Word do recibo salvo em: {word_saida}")
 
             pdf_saida = word_saida.with_suffix(".pdf")
-            doc.SaveAs(str(pdf_saida), FileFormat=17)
+            _com_retry(lambda: doc.SaveAs(str(pdf_saida), FileFormat=17), "salvar PDF")
             print(f"📑 PDF do recibo salvo em: {pdf_saida}")
 
-            doc.Close(False)
-            word.Quit()
+            _com_retry(lambda: doc.Close(False), "fechar documento")
+            _com_retry(lambda: word.Quit(), "encerrar Word")
 
         except Exception as e:
             if doc:
