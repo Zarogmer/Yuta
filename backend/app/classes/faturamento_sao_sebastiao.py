@@ -177,27 +177,129 @@ class FaturamentoSaoSebastiao:
         # só ponto: 1234.56
         return float(s)
 
+    def _poppler_paths_candidatos(self) -> list[Path]:
+        candidatos = []
+
+        env_poppler = os.environ.get("POPPLER_PATH")
+        if env_poppler:
+            candidatos.append(Path(env_poppler))
+
+        path_env = os.environ.get("PATH", "")
+        for parte in path_env.split(os.pathsep):
+            if parte and "poppler" in parte.lower():
+                candidatos.append(Path(parte))
+
+        if getattr(sys, "frozen", False):
+            meipass = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+            exe_dir = Path(sys.executable).resolve().parent
+            candidatos.extend(
+                [
+                    meipass / "poppler" / "Library" / "bin",
+                    meipass / "poppler" / "bin",
+                    exe_dir / "poppler" / "Library" / "bin",
+                    exe_dir / "poppler" / "bin",
+                ]
+            )
+        else:
+            raiz_projeto = Path(__file__).resolve().parents[3]
+            candidatos.extend(
+                [
+                    raiz_projeto / "poppler" / "Library" / "bin",
+                    raiz_projeto / "poppler" / "bin",
+                ]
+            )
+
+        candidatos.extend(
+            [
+                Path(r"C:\poppler-25.12.0\Library\bin"),
+                Path(r"C:\poppler\Library\bin"),
+                Path(r"C:\Program Files\poppler\Library\bin"),
+                Path(r"C:\Program Files (x86)\poppler\Library\bin"),
+            ]
+        )
+
+        vistos = set()
+        validos = []
+        for pasta in candidatos:
+            chave = str(pasta).lower().strip()
+            if not chave or chave in vistos:
+                continue
+            vistos.add(chave)
+            if pasta.exists() and (pasta / "pdfinfo.exe").exists():
+                validos.append(pasta)
+        return validos
+
+    def _configurar_tesseract(self):
+        candidatos = []
+
+        env_tesseract = os.environ.get("TESSERACT_EXE")
+        if env_tesseract:
+            candidatos.append(Path(env_tesseract))
+
+        if getattr(sys, "frozen", False):
+            meipass = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+            exe_dir = Path(sys.executable).resolve().parent
+            candidatos.extend(
+                [
+                    meipass / "tesseract" / "tesseract.exe",
+                    exe_dir / "tesseract" / "tesseract.exe",
+                ]
+            )
+
+        candidatos.extend(
+            [
+                Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe"),
+                Path(r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe"),
+            ]
+        )
+
+        for exe in candidatos:
+            if exe.exists():
+                pytesseract.pytesseract.tesseract_cmd = str(exe)
+                tessdata_dir = exe.parent / "tessdata"
+                if tessdata_dir.exists():
+                    os.environ["TESSDATA_PREFIX"] = str(tessdata_dir)
+                return
+
 
 
     def _ocr_pagina(self, caminho_pdf: Path, page_num: int, dpi: int = 350, lang: str = "por") -> str:
 
-        POPPLER_PATH = r"C:\poppler-25.12.0\Library\bin"
-        TESSERACT_EXE = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-        TESSDATA_DIR  = r"C:\Program Files\Tesseract-OCR\tessdata"
+        self._configurar_tesseract()
 
-        pytesseract.pytesseract.tesseract_cmd = TESSERACT_EXE
-        os.environ["TESSDATA_PREFIX"] = TESSDATA_DIR
+        imgs = []
+        erros = []
 
-        imgs = convert_from_path(
-            str(caminho_pdf),
-            dpi=dpi,
-            grayscale=True,
-            poppler_path=POPPLER_PATH,
-            first_page=page_num,
-            last_page=page_num,
-        )
+        try:
+            imgs = convert_from_path(
+                str(caminho_pdf),
+                dpi=dpi,
+                grayscale=True,
+                first_page=page_num,
+                last_page=page_num,
+            )
+        except Exception as exc:
+            erros.append(str(exc))
 
         if not imgs:
+            for poppler_dir in self._poppler_paths_candidatos():
+                try:
+                    imgs = convert_from_path(
+                        str(caminho_pdf),
+                        dpi=dpi,
+                        grayscale=True,
+                        poppler_path=str(poppler_dir),
+                        first_page=page_num,
+                        last_page=page_num,
+                    )
+                    if imgs:
+                        break
+                except Exception as exc:
+                    erros.append(str(exc))
+
+        if not imgs:
+            if erros:
+                print(f"⚠️ OCR indisponível (Poppler/Tesseract): {erros[-1]}")
             return ""
 
         return pytesseract.image_to_string(imgs[0], lang=lang, config="--oem 3 --psm 6")

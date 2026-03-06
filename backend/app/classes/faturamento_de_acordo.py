@@ -61,7 +61,7 @@ class FaturamentoDeAcordo:
         "Unimar Agenciamentos": {
             "G26": 500,
             "C27": None,
-            "C35": 25,
+            "C35": 23.85,
         },
         "A/C Delta Agenciamento Marítimo Ltda.": {
             "G26": 500,

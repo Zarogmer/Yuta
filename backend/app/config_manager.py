@@ -278,4 +278,62 @@ def obter_caminho_assinatura_usuario(usuario_nome: str) -> Path | None:
             if path.exists() and path.is_file():
                 return path
 
+    # Fallback automatico: tenta encontrar a assinatura na pasta "assinaturas"
+    # da raiz do projeto, com base no nome do usuario.
+    aliases = []
+    aliases.append(usuario_norm)
+    primeiro_nome = usuario_norm.split()[0] if usuario_norm.split() else ""
+    if primeiro_nome:
+        aliases.append(primeiro_nome)
+
+    aliases_norm = []
+    vistos_alias = set()
+    for alias in aliases:
+        alias_limpo = "".join(ch for ch in alias if ch.isalnum())
+        if not alias_limpo:
+            continue
+        chave = alias_limpo.upper()
+        if chave in vistos_alias:
+            continue
+        vistos_alias.add(chave)
+        aliases_norm.append(chave)
+
+    caminho_config = _obter_caminho_config()
+    pasta_base = caminho_config.parent
+    pastas_assinaturas = [
+        pasta_base / "assinaturas",
+        pasta_base.parent / "assinaturas",
+    ]
+
+    extensoes = {".png", ".jpg", ".jpeg", ".bmp", ".gif"}
+    candidatos = []
+
+    for pasta in pastas_assinaturas:
+        if not pasta.exists() or not pasta.is_dir():
+            continue
+        for arquivo in pasta.iterdir():
+            if not arquivo.is_file() or arquivo.suffix.lower() not in extensoes:
+                continue
+            stem_norm = _normalizar_usuario(arquivo.stem)
+            stem_compacto = "".join(ch for ch in stem_norm if ch.isalnum()).upper()
+            if not stem_compacto:
+                continue
+
+            melhor_score = None
+            for alias_norm in aliases_norm:
+                if stem_compacto == alias_norm:
+                    melhor_score = 0
+                    break
+                if stem_compacto.startswith(alias_norm):
+                    melhor_score = 1 if melhor_score is None else min(melhor_score, 1)
+                elif alias_norm in stem_compacto:
+                    melhor_score = 2 if melhor_score is None else min(melhor_score, 2)
+
+            if melhor_score is not None:
+                candidatos.append((melhor_score, len(stem_compacto), str(arquivo), arquivo))
+
+    if candidatos:
+        candidatos.sort(key=lambda item: (item[0], item[1], item[2]))
+        return candidatos[0][3]
+
     return None

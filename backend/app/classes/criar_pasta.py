@@ -46,14 +46,10 @@ class CriarPasta:
         if flag in {"1", "true", "yes", "on"}:
             return True
 
-        for base in bases_rede:
-            try:
-                if base.exists() and base.is_dir():
-                    return False
-            except Exception:
-                continue
-
-        return True
+        # Por padrão, NÃO usa fallback para Desktop.
+        # Isso evita atualizar uma cópia local da planilha de controle,
+        # causando divergência com o arquivo compartilhado (Exibir online).
+        return False
 
     def _possiveis_bases_clientes(self):
         """
@@ -99,11 +95,51 @@ class CriarPasta:
         bases_desktop = self._possiveis_desktops() if self._deve_usar_fallback_desktop(bases_rede) else []
         bases = bases_rede + bases_desktop
 
+        base_configurada = None
+        try:
+            base_configurada = obter_caminho_base_faturamentos().resolve()
+        except Exception:
+            base_configurada = None
+
+        def _dentro_base_configurada(caminho: Path) -> bool:
+            if not base_configurada:
+                return False
+            try:
+                resolvido = caminho.resolve()
+            except Exception:
+                resolvido = caminho
+            return resolvido == base_configurada or base_configurada in resolvido.parents
+
+        def _preferir_caminho(caminhos: list[Path]) -> Path | None:
+            if not caminhos:
+                return None
+
+            def _score(caminho: Path):
+                dentro_base = 0 if _dentro_base_configurada(caminho) else 1
+                try:
+                    resolvido = str(caminho.resolve()).upper()
+                except Exception:
+                    resolvido = str(caminho).upper()
+                onedrive = 0 if "ONEDRIVE" in resolvido else 1
+                try:
+                    mtime = -caminho.stat().st_mtime
+                except Exception:
+                    mtime = 0
+                return (dentro_base, onedrive, mtime)
+
+            caminhos_ordenados = sorted(caminhos, key=_score)
+            escolhido = caminhos_ordenados[0]
+            print(f"📌 Planilha de controle selecionada: {escolhido}")
+            return escolhido
+
         ano_atual_4d = str(datetime.now().year)
         ano_atual_2d = self._ano_atual_2d()
 
         # 1) Prioriza nomes explícitos do ano atual (ex.: "CONTROLE DE FATURAMENTO 2026")
+        encontrados_prioritarios = []
         for base in bases:
+            if not base.exists() or not base.is_dir():
+                continue
             for ext in extensoes:
                 nomes_prioritarios = [
                     f"{self.planilha_nome} {ano_atual_4d}{ext}",
@@ -114,16 +150,28 @@ class CriarPasta:
                     f"{self.planilha_nome}_{ano_atual_2d}{ext}",
                 ]
                 for nome in nomes_prioritarios:
-                    caminho = base / nome
-                    if caminho.exists():
-                        return caminho
+                    for caminho in [base / nome, *base.rglob(nome)]:
+                        if caminho.exists() and caminho.is_file():
+                            encontrados_prioritarios.append(caminho)
+
+        escolhido = _preferir_caminho(encontrados_prioritarios)
+        if escolhido:
+            return escolhido
 
         # 2) Fallback para nome padrão sem sufixo
+        encontrados_padrao = []
         for base in bases:
+            if not base.exists() or not base.is_dir():
+                continue
             for ext in extensoes:
-                caminho = base / f"{self.planilha_nome}{ext}"
-                if caminho.exists():
-                    return caminho
+                nome_padrao = f"{self.planilha_nome}{ext}"
+                for caminho in [base / nome_padrao, *base.rglob(nome_padrao)]:
+                    if caminho.exists() and caminho.is_file():
+                        encontrados_padrao.append(caminho)
+
+        escolhido = _preferir_caminho(encontrados_padrao)
+        if escolhido:
+            return escolhido
 
         candidatos = []
         nome_ref = self._normalizar_pasta_nome(self.planilha_nome)
@@ -151,7 +199,9 @@ class CriarPasta:
 
         if candidatos:
             candidatos.sort(key=lambda item: (item[0], item[1], item[2], item[3]))
-            return candidatos[0][4]
+            escolhido = candidatos[0][4]
+            print(f"📌 Planilha de controle selecionada: {escolhido}")
+            return escolhido
 
         locais = "\n".join(f"- {b}" for b in bases)
         raise FileNotFoundError(

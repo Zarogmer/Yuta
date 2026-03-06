@@ -756,22 +756,17 @@ def ajustar_layout_report_vigia(ws_report):
     """
     Padroniza o layout de impressão da aba REPORT VIGIA para evitar corte no PDF.
     """
-    xlUp = -4162
     xlPortrait = 1
     xlPaperA4 = 9
 
     try:
-        # REPORT VIGIA usa principalmente colunas C/E/G; usar apenas coluna A
-        # pode reduzir a área e cortar o PDF.
-        colunas_relevantes = [1, 3, 5, 6, 7, 10]  # A, C, E, F, G, J
-        ultima_linha = 1
-        for coluna in colunas_relevantes:
-            linha_coluna = ws_report.api.Cells(ws_report.api.Rows.Count, coluna).End(xlUp).Row
-            if linha_coluna and int(linha_coluna) > ultima_linha:
-                ultima_linha = int(linha_coluna)
-
-        ultima_linha = max(int(ultima_linha), 40)
-        ultima_coluna = 10
+        ultima_linha, ultima_coluna = _detectar_area_util_planilha(
+            ws_report,
+            min_linhas=40,
+            min_colunas=14,
+            max_linhas_scan=260,
+            max_colunas_scan=40,
+        )
 
         area = ws_report.api.Range(
             ws_report.api.Cells(1, 1),
@@ -781,10 +776,11 @@ def ajustar_layout_report_vigia(ws_report):
         page_setup = ws_report.api.PageSetup
         page_setup.Zoom = False
         page_setup.FitToPagesWide = 1
-        page_setup.FitToPagesTall = 1
+        page_setup.FitToPagesTall = False
         page_setup.Orientation = xlPortrait
         page_setup.PaperSize = xlPaperA4
         page_setup.CenterHorizontally = True
+        page_setup.CenterVertically = False
         page_setup.PrintArea = area.Address
     except Exception as e:
         print(f"⚠️ Não foi possível ajustar layout do REPORT VIGIA: {e}")
@@ -805,7 +801,7 @@ def _detectar_area_util_planilha(
     max_colunas_scan=40,
 ):
     """
-    Detecta a área útil real por conteúdo para evitar encolhimento por UsedRange inflado.
+    Detecta a área útil por conteúdo real (evita UsedRange inflado por formatação).
     """
     try:
         valores = ws.range((1, 1), (max_linhas_scan, max_colunas_scan)).value
@@ -823,6 +819,10 @@ def _detectar_area_util_planilha(
                     ultima_linha = max(ultima_linha, i)
                     ultima_coluna = max(ultima_coluna, j)
 
+        # pequeno padding para não cortar bordas/rodapé por 1-2 células
+        ultima_linha = min(ultima_linha + 2, max_linhas_scan)
+        ultima_coluna = min(ultima_coluna + 1, max_colunas_scan)
+
         return max(ultima_linha, min_linhas), max(ultima_coluna, min_colunas)
     except Exception:
         return min_linhas, min_colunas
@@ -839,9 +839,9 @@ def ajustar_layout_front_vigia(ws_front):
         ultima_linha, ultima_coluna = _detectar_area_util_planilha(
             ws_front,
             min_linhas=45,
-            min_colunas=10,
-            max_linhas_scan=120,
-            max_colunas_scan=20,
+            min_colunas=14,
+            max_linhas_scan=180,
+            max_colunas_scan=30,
         )
 
         area = ws_front.api.Range(
@@ -852,7 +852,7 @@ def ajustar_layout_front_vigia(ws_front):
         page_setup = ws_front.api.PageSetup
         page_setup.Zoom = False
         page_setup.FitToPagesWide = 1
-        page_setup.FitToPagesTall = 1
+        page_setup.FitToPagesTall = False
         page_setup.Orientation = xlPortrait
         page_setup.PaperSize = xlPaperA4
         page_setup.CenterHorizontally = True
@@ -869,7 +869,13 @@ def ajustar_layout_front_vigia_no_wb(wb):
             break
 
 
-def ajustar_layout_planilha_generica(ws, min_linhas=40, min_colunas=8):
+def ajustar_layout_planilha_generica(
+    ws,
+    min_linhas=40,
+    min_colunas=14,
+    max_linhas_scan=260,
+    max_colunas_scan=40,
+):
     xlPortrait = 1
     xlPaperA4 = 9
 
@@ -878,8 +884,8 @@ def ajustar_layout_planilha_generica(ws, min_linhas=40, min_colunas=8):
             ws,
             min_linhas=min_linhas,
             min_colunas=min_colunas,
-            max_linhas_scan=220,
-            max_colunas_scan=40,
+            max_linhas_scan=max_linhas_scan,
+            max_colunas_scan=max_colunas_scan,
         )
 
         area = ws.api.Range(
@@ -890,7 +896,7 @@ def ajustar_layout_planilha_generica(ws, min_linhas=40, min_colunas=8):
         page_setup = ws.api.PageSetup
         page_setup.Zoom = False
         page_setup.FitToPagesWide = 1
-        page_setup.FitToPagesTall = 1
+        page_setup.FitToPagesTall = False
         page_setup.Orientation = xlPortrait
         page_setup.PaperSize = xlPaperA4
         page_setup.CenterHorizontally = True
@@ -910,11 +916,11 @@ def _normalizar_nome_aba_layout(nome: str) -> str:
 def ajustar_layout_pdf_por_aba(ws):
     nome = _normalizar_nome_aba_layout(getattr(ws, "name", ""))
 
-    if nome == "REPORT VIGIA":
+    if "REPORT VIGIA" in nome:
         ajustar_layout_report_vigia(ws)
         return
 
-    if nome == "FRONT VIGIA":
+    if "FRONT VIGIA" in nome:
         ajustar_layout_front_vigia(ws)
         return
 

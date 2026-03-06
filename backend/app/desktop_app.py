@@ -1099,6 +1099,26 @@ class DesktopApp(tk.Tk):
         if env_poppler:
             candidatos.append(Path(env_poppler))
 
+        if getattr(sys, "frozen", False):
+            meipass = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+            exe_dir = Path(sys.executable).resolve().parent
+            candidatos.extend(
+                [
+                    meipass / "poppler" / "Library" / "bin",
+                    meipass / "poppler" / "bin",
+                    exe_dir / "poppler" / "Library" / "bin",
+                    exe_dir / "poppler" / "bin",
+                ]
+            )
+        else:
+            raiz_projeto = Path(__file__).resolve().parents[2]
+            candidatos.extend(
+                [
+                    raiz_projeto / "poppler" / "Library" / "bin",
+                    raiz_projeto / "poppler" / "bin",
+                ]
+            )
+
         path_env = os.environ.get("PATH", "")
         for parte in path_env.split(os.pathsep):
             if not parte:

@@ -146,7 +146,7 @@ CLIENTES_EMAIL = {
         "corpo": DEFAULT_CORPO,
     },
     "ROCHAMAR": {
-        "para": ["faturas@rochamar.com", "cpagar@rochamar.com", "oprsts@rochamar.com"],
+        "para": ["faturas@rochamar.com", "cpagar@rochamar.com", "oprsts@rochamar.com","solicitaroc@rochamar.com"],
         "cc": ["sanport@sanportlogistica.com.br"],
         "assunto": DEFAULT_ASSUNTO,
         "corpo": CORPO_ROCHAMAR,
@@ -206,7 +206,8 @@ CLIENTES_EMAIL = {
     },
     "GEM": {
         "para": ["agency@transatlanticamaritima.com.br", 
-                 "financial@transatlanticamaritima.com.br, brunoserrano@transatlanticamaritima.com.br", 
+                 "financial@transatlanticamaritima.com.br",
+                 "brunoserrano@transatlanticamaritima.com.br", 
                  "fernandovalle@transatlanticamaritima.com.br"],
 
         "cc": ["sanport@sanportlogistica.com.br"],
@@ -268,6 +269,13 @@ CLIENTES_EMAIL = {
         "assunto": DEFAULT_ASSUNTO,
         "corpo": DEFAULT_CORPO,
     },
+    "ZPORT": {
+        "para": ["everton.pereira@zport.com.br", "agency@zport.com.br"],
+        "cc": ["sanport@sanportlogistica.com.br"],
+        "assunto": DEFAULT_ASSUNTO,
+        "corpo": DEFAULT_CORPO,
+
+},
 }
 
 
@@ -324,41 +332,42 @@ def _cid_assinatura(usuario_nome: str | None) -> str:
     return f"assinatura_{base.lower() or 'usuario'}"
 
 
-def _inserir_assinatura_apos_atenciosamente(corpo_html: str, cid: str) -> str:
+def _inserir_assinatura_no_final(corpo_html: str, cid: str) -> str:
     bloco = (
-        "<p>Atenciosamente,</p>"
-        "<p>&nbsp;</p>"
-        "<p>&nbsp;</p>"
-        f"<p><img src=\"cid:{cid}\" style=\"max-width:1200px;height:auto;\"></p>"
+        f"<p style=\"margin:4px 0 0 0;\">"
+        f"<img src=\"cid:{cid}\" width=\"420\" style=\"width:420px;max-width:420px;height:auto;display:block;\">"
+        "</p>"
     )
 
-    marcador = "<p>Atenciosamente,</p>"
-    if marcador in corpo_html:
-        return corpo_html.replace(marcador, bloco, 1)
-
-    if "Atenciosamente," in corpo_html:
-        return corpo_html.replace("Atenciosamente,", bloco, 1)
-
-    fechamento_body = re.search(r"</body\s*>", corpo_html, flags=re.IGNORECASE)
-    if fechamento_body:
-        idx = fechamento_body.start()
-        return corpo_html[:idx] + bloco + corpo_html[idx:]
-
-    fechamento_html = re.search(r"</html\s*>", corpo_html, flags=re.IGNORECASE)
-    if fechamento_html:
-        idx = fechamento_html.start()
-        return corpo_html[:idx] + bloco + corpo_html[idx:]
+    for padrao in (r"</body\s*>", r"</html\s*>", r"</div\s*>"):
+        matches = list(re.finditer(padrao, corpo_html, flags=re.IGNORECASE))
+        if matches:
+            idx = matches[-1].start()
+            return corpo_html[:idx] + bloco + corpo_html[idx:]
 
     return corpo_html + bloco
+
+
+def _normalizar_lista_emails(lista_emails) -> list[str]:
+    resultado = []
+    if not lista_emails:
+        return resultado
+
+    for item in lista_emails:
+        partes = re.split(r"[;,]", str(item or ""))
+        for parte in partes:
+            email = parte.strip()
+            if email:
+                resultado.append(email)
+
+    return resultado
 
 
 def _mesclar_cc(*listas_cc) -> list[str]:
     resultado = []
     vistos = set()
     for lista in listas_cc:
-        if not lista:
-            continue
-        for email in lista:
+        for email in _normalizar_lista_emails(lista):
             email_limpo = str(email).strip()
             if not email_limpo:
                 continue
@@ -396,7 +405,7 @@ def criar_rascunho_email_cliente(
     if not config:
         raise ValueError(f"Cliente nao encontrado: {nome_cliente_norm}")
 
-    para = config.get("para", [])
+    para = _normalizar_lista_emails(config.get("para", []))
     cc = _mesclar_cc(config.get("cc", []), CC_FIXO)
     contexto = {
         "cliente": nome_cliente_norm,
@@ -435,11 +444,11 @@ def criar_rascunho_email_cliente(
         if corpo_html_final:
             if caminho_assinatura:
                 cid = _cid_assinatura(usuario_nome)
-                corpo_html_final = _inserir_assinatura_apos_atenciosamente(
+                corpo_html_com_assinatura = _inserir_assinatura_no_final(
                     corpo_html_final,
                     cid,
                 )
-                mail.HTMLBody = corpo_html_final
+                mail.HTMLBody = corpo_html_com_assinatura
                 try:
                     anexo_ass = mail.Attachments.Add(str(caminho_assinatura))
                     anexo_ass.PropertyAccessor.SetProperty(
@@ -448,6 +457,7 @@ def criar_rascunho_email_cliente(
                     )
                 except Exception as e:
                     print(f"⚠️ Falha ao embutir assinatura de e-mail: {e}")
+                    mail.HTMLBody = corpo_html_final
             else:
                 mail.HTMLBody = corpo_html_final
         else:
