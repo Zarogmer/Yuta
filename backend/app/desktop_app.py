@@ -8,6 +8,7 @@ import sys
 import threading
 import tkinter as tk
 import os
+from datetime import datetime
 from pathlib import Path
 from tkinter import messagebox, ttk
 
@@ -52,6 +53,13 @@ THEME = {
 
 
 class DesktopApp(tk.Tk):
+    _LOCKED_MENU_KEYWORDS = (
+        "DESFAZER PONTO",
+        "RELATÓRIO",
+        "RELATORIO",
+        "GERADOR NFS-E",
+    )
+
     def __init__(self):
         super().__init__()
         self.title("Yuta - Central de Processos")
@@ -70,8 +78,13 @@ class DesktopApp(tk.Tk):
         self._preview_pdf_path = None
         self._preview_pages = []
         self._preview_zoom = 1.0
+        self._preview_zoom_max = 2.5
         self._preview_page_index = 0
+        self._preview_mode_hint = ""
+        self._preview_reset_scroll = False
         self._startup_cancelled = False
+        self._progress_job = None
+        self._progress_value = 0.0
 
         self._build_style()
         self._usuario_nome = self._selecionar_usuario_inicial()
@@ -343,6 +356,18 @@ class DesktopApp(tk.Tk):
             foreground=t["fg_status"],
             font=t["font_sub"],
         )
+        style.configure(
+            "StatusReady.TLabel",
+            background=t["bg_surface"],
+            foreground=t["accent_ok"],
+            font=("Segoe UI", 11, "bold"),
+        )
+        style.configure(
+            "StatusBusy.TLabel",
+            background=t["bg_surface"],
+            foreground=t["accent_warn"],
+            font=("Segoe UI", 11, "bold"),
+        )
         style.configure("Thin.TSeparator", background=t["separator"])
 
     def _build_layout(self):
@@ -383,14 +408,20 @@ class DesktopApp(tk.Tk):
 
         # Buttons
         for item in self._menu_items():
+            label = item["label"]
+            label_norm = label.upper()
+            locked = any(chave in label_norm for chave in self._LOCKED_MENU_KEYWORDS)
+
             btn = ttk.Button(
                 sidebar,
-                text=item["label"],
+                text=f"{label}  🔒" if locked else label,
                 style="Action.TButton",
                 command=lambda i=item: self._handle_menu_action(i),
+                state="disabled" if locked else "normal",
             )
             btn.pack(fill="x", padx=14, pady=6)
-            self._buttons.append(btn)
+            if not locked:
+                self._buttons.append(btn)
 
         ttk.Separator(sidebar, orient="horizontal", style="Thin.TSeparator").pack(
             fill="x", padx=14, pady=(14, 10)
@@ -408,13 +439,6 @@ class DesktopApp(tk.Tk):
         )
         self._btn_generate_excel.pack(fill="x", pady=4)
 
-        ttk.Button(tools, text="Limpar log", style="Ghost.TButton", command=self._clear_log).pack(
-            fill="x", pady=4
-        )
-        ttk.Button(tools, text="Copiar log", style="Ghost.TButton", command=self._copy_log).pack(
-            fill="x", pady=4
-        )
-
         # Main (log)
         main = ttk.Frame(body, style="Card.TFrame")
         main.pack(side="left", fill="both", expand=True, padx=(12, 0), ipadx=10, ipady=10)
@@ -424,7 +448,7 @@ class DesktopApp(tk.Tk):
 
         ttk.Label(top_row, text="Saída / Log", style="Section.TLabel").pack(side="left")
 
-        self._status = ttk.Label(top_row, text="Pronto", style="Status.TLabel")
+        self._status = ttk.Label(top_row, text="Pronto", style="StatusReady.TLabel")
         self._status.pack(side="right")
 
         # Log / Preview area
@@ -506,12 +530,15 @@ class DesktopApp(tk.Tk):
 
         self._preview_canvas = tk.Canvas(
             preview_wrap,
-            bg=THEME["bg_root"],
+            bg="#081630",
             highlightthickness=0,
         )
         self._preview_canvas.pack(side="left", fill="both", expand=True)
         self._preview_canvas.bind("<Configure>", self._on_preview_resize)
         self._preview_canvas.bind("<MouseWheel>", self._on_preview_mousewheel)
+        self._preview_canvas.bind("<Shift-MouseWheel>", self._on_preview_mousewheel_horizontal)
+        self._preview_canvas.bind("<ButtonPress-1>", self._on_preview_drag_start)
+        self._preview_canvas.bind("<B1-Motion>", self._on_preview_drag_move)
 
         preview_scroll = ttk.Scrollbar(
             preview_wrap,
@@ -520,6 +547,13 @@ class DesktopApp(tk.Tk):
         )
         preview_scroll.pack(side="right", fill="y")
         self._preview_canvas.configure(yscrollcommand=preview_scroll.set)
+
+        self._preview_hscroll = ttk.Scrollbar(
+            preview_wrap,
+            orient="horizontal",
+            command=self._preview_canvas.xview,
+        )
+        self._preview_canvas.configure(xscrollcommand=self._preview_hscroll.set)
 
         self._preview_placeholder = self._preview_canvas.create_text(
             8, 8, anchor="nw", text="Sem pre-visualizacao",
@@ -530,7 +564,8 @@ class DesktopApp(tk.Tk):
         bottom = ttk.Frame(main, style="Card.TFrame")
         bottom.pack(fill="x", padx=12, pady=(0, 12))
 
-        self._progress = ttk.Progressbar(bottom, mode="indeterminate")
+        self._progress = ttk.Progressbar(bottom, mode="determinate", maximum=100)
+        self._progress.configure(value=0)
         self._progress.pack(fill="x")
 
     def _configure_tags(self):
@@ -737,7 +772,7 @@ class DesktopApp(tk.Tk):
         dialog.wait_window()
         return resultado["valor"]
 
-    def _pedir_dados_periodo(self, programa_cls, titulo):
+    def _pedir_dados_periodo(self, programa_cls, titulo, apenas_arquivo=False):
         programa = programa_cls(debug=False)
 
         try:
@@ -751,7 +786,13 @@ class DesktopApp(tk.Tk):
                 messagebox.showwarning("Sem dados", "Nenhuma data encontrada na planilha.", parent=self)
                 return None
 
-            caminho_navio = str(programa.caminho_navio or "")
+            caminho_base = getattr(programa, "_caminho_navio_destino", None)
+            caminho_navio = str(caminho_base or programa.caminho_navio or "")
+            if apenas_arquivo:
+                return {
+                    "caminho_navio": caminho_navio,
+                    "datas": datas,
+                }
         finally:
             try:
                 fechar_workbooks(
@@ -813,17 +854,99 @@ class DesktopApp(tk.Tk):
         dialog.wait_window()
         return resultado["valor"]
 
+    def _pedir_data_periodo_com_datas(self, datas, titulo):
+        if not datas:
+            return None
+
+        dialog = tk.Toplevel(self)
+        dialog.title(titulo)
+        dialog.configure(bg=THEME["bg_root"])
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        frame = ttk.Frame(dialog, style="Card.TFrame")
+        frame.pack(padx=16, pady=14, fill="both", expand=True)
+
+        ttk.Label(frame, text="Data", style="Section.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 4))
+        data_var = tk.StringVar(value=datas[0])
+        data_cb = ttk.Combobox(frame, textvariable=data_var, values=datas, state="normal", width=36)
+        data_cb.grid(row=1, column=0, sticky="ew", pady=(0, 12))
+
+        ttk.Label(frame, text="Período", style="Section.TLabel").grid(row=2, column=0, sticky="w", pady=(0, 4))
+        periodos = ["06h", "12h", "18h", "00h"]
+        periodo_var = tk.StringVar(value=periodos[0])
+        periodo_cb = ttk.Combobox(frame, textvariable=periodo_var, values=periodos, state="readonly", width=36)
+        periodo_cb.grid(row=3, column=0, sticky="ew", pady=(0, 12))
+
+        buttons = ttk.Frame(frame, style="Card.TFrame")
+        buttons.grid(row=4, column=0, sticky="e")
+
+        resultado = {"valor": None}
+
+        def on_ok():
+            data = data_var.get().strip()
+            periodo = periodo_var.get().strip()
+            if not data or not periodo:
+                messagebox.showwarning("Dados incompletos", "Selecione data e período.", parent=dialog)
+                return
+
+            try:
+                data = datetime.strptime(data, "%d/%m/%Y").strftime("%d/%m/%Y")
+            except ValueError:
+                messagebox.showwarning(
+                    "Data invalida",
+                    "Informe a data no formato DD/MM/AAAA.",
+                    parent=dialog,
+                )
+                return
+
+            resultado["valor"] = {
+                "data": data,
+                "periodo": periodo,
+            }
+            dialog.destroy()
+
+        def on_cancel():
+            dialog.destroy()
+
+        dialog.bind('<Return>', lambda _event: on_ok())
+
+        ttk.Button(buttons, text="Cancelar", style="Ghost.TButton", command=on_cancel).pack(side="right", padx=(8, 0))
+        ttk.Button(buttons, text="OK", style="Action.TButton", command=on_ok).pack(side="right")
+
+        data_cb.focus_set()
+        dialog.wait_window()
+        return resultado["valor"]
+
     def _handle_menu_action(self, item):
         # Casos especiais que precisam coletar dados antes de executar
         if item["label"] == "📁 Criar Pasta":
             self._criar_pasta_ui()  # Chama diretamente (não via _run_action)
             return
 
-        if item["label"] in ("🕒 Fazer Ponto", "↩️ Desfazer Ponto"):
-            programa_cls = FazerPonto if item["label"] == "🕒 Fazer Ponto" else ProgramaRemoverPeriodo
-            selecao = self._pedir_dados_periodo(programa_cls, item["label"])
+        if item["label"] == "🕒 Fazer Ponto":
+            selecao = self._pedir_dados_periodo(FazerPonto, item["label"], apenas_arquivo=True)
             if not selecao:
-                self._status.configure(text="Operação cancelada")
+                self._set_status("Operacao cancelada", busy=False)
+                return
+
+            self._write_log(
+                f"{item['label']}: arquivo={Path(selecao['caminho_navio']).name}\n",
+                tag="info",
+            )
+            self._clear_pending_action()
+
+            self._run_preview(
+                preview_action=lambda s=selecao: FazerPonto(debug=True).executar_preview(selection=s),
+                final_action=item["action"],
+                label=item["label"],
+            )
+            return
+
+        if item["label"] == "↩️ Desfazer Ponto":
+            selecao = self._pedir_dados_periodo(ProgramaRemoverPeriodo, item["label"])
+            if not selecao:
+                self._set_status("Operacao cancelada", busy=False)
                 return
 
             self._write_log(
@@ -846,14 +969,25 @@ class DesktopApp(tk.Tk):
 
         self._running = True
         self._set_buttons_state("disabled")
-        self._status.configure(text="Executando...")
-        self._progress.start(12)
+        self._set_status("Executando...", busy=True)
+        self._start_loading_progress()
 
         self._write_log("\n▶ Iniciando...\n", tag="info")
 
         def job():
             try:
-                action()
+                result = action()
+                if isinstance(result, dict):
+                    info_msg = str(result.get("info") or "").strip()
+                    if info_msg:
+                        self._write_log(info_msg + "\n", tag="info")
+
+                    msg = str(result.get("message") or "").strip()
+                    if msg:
+                        tag = "ok" if bool(result.get("changed", True)) else "warn"
+                        self._write_log(msg + "\n", tag=tag)
+                elif isinstance(result, str) and result.strip():
+                    self._write_log(result.strip() + "\n", tag="info")
                 self._write_log("\n✅ Concluído.\n", tag="ok")
             except Exception as exc:
                 import traceback
@@ -868,10 +1002,11 @@ class DesktopApp(tk.Tk):
         if self._running:
             return
 
+        self._preview_mode_hint = str(label or "")
         self._running = True
         self._set_buttons_state("disabled")
-        self._status.configure(text="Gerando pre-visualizacao...")
-        self._progress.start(12)
+        self._set_status("Gerando pre-visualizacao...", busy=True)
+        self._start_loading_progress()
 
         self._write_log("\n[PREVIEW] Iniciando...\n", tag="info")
 
@@ -914,7 +1049,7 @@ class DesktopApp(tk.Tk):
 
     def _clear_log(self):
         self._log_text.delete("1.0", "end")
-        self._status.configure(text="Pronto")
+        self._set_status("Pronto", busy=False)
         self._clear_pending_action()
         self._clear_preview()
 
@@ -922,20 +1057,60 @@ class DesktopApp(tk.Tk):
         txt = self._log_text.get("1.0", "end-1c")
         self.clipboard_clear()
         self.clipboard_append(txt)
-        self._status.configure(text="Log copiado ✅")
+        self._set_status("Log copiado", busy=False)
 
     def _set_idle(self):
         self._running = False
         self._set_buttons_state("normal")
-        self._progress.stop()
-        self._status.configure(text="Pronto")
+        self._finish_loading_progress()
+        self._set_status("Pronto", busy=False)
+
+    def _set_status(self, text, busy=False):
+        style = "StatusBusy.TLabel" if busy else "StatusReady.TLabel"
+        self._status.configure(text=text, style=style)
+
+    def _start_loading_progress(self):
+        self._cancel_loading_progress_job()
+        self._progress_value = 0.0
+        self._progress.configure(value=0)
+        self._schedule_loading_progress_tick()
+
+    def _schedule_loading_progress_tick(self):
+        if not self._running:
+            return
+
+        # Avanco desacelerado e mais lento no inicio.
+        faltante = max(95.0 - self._progress_value, 0.0)
+        passo = max(0.08, faltante * 0.018)
+        self._progress_value = min(95.0, self._progress_value + passo)
+        self._progress.configure(value=self._progress_value)
+        self._progress_job = self.after(130, self._schedule_loading_progress_tick)
+
+    def _finish_loading_progress(self):
+        self._cancel_loading_progress_job()
+        self._progress_value = 100.0
+        self._progress.configure(value=100)
+
+        def _reset_bar():
+            self._progress_value = 0.0
+            self._progress.configure(value=0)
+
+        self.after(220, _reset_bar)
+
+    def _cancel_loading_progress_job(self):
+        if self._progress_job is not None:
+            try:
+                self.after_cancel(self._progress_job)
+            except Exception:
+                pass
+            self._progress_job = None
 
     def _set_pending_action(self, label, action, selection=None):
         self._pending_action = action
         self._pending_label = label
         self._pending_selection = selection
         self._btn_generate_excel.configure(state="normal")
-        self._status.configure(text="Pre-visualizacao pronta")
+        self._set_status("Pre-visualizacao pronta", busy=False)
 
     def _clear_pending_action(self):
         self._pending_action = None
@@ -950,6 +1125,23 @@ class DesktopApp(tk.Tk):
 
         action = self._pending_action
         selection = self._pending_selection
+
+        if self._pending_label == "🕒 Fazer Ponto":
+            datas = list((selection or {}).get("datas") or [])
+            escolha = self._pedir_data_periodo_com_datas(datas, "🕒 Fazer Ponto")
+            if not escolha:
+                self._set_status("Operacao cancelada", busy=False)
+                return
+
+            selection = {
+                **(selection or {}),
+                **escolha,
+            }
+            self._write_log(
+                f"🕒 Fazer Ponto: data={selection['data']} | período={selection['periodo']}\n",
+                tag="info",
+            )
+
         self._clear_pending_action()
         self._run_action(lambda: action(selection))
 
@@ -982,6 +1174,22 @@ class DesktopApp(tk.Tk):
         delta = int(-1 * (event.delta / 120))
         self._preview_canvas.yview_scroll(delta, "units")
 
+    def _on_preview_mousewheel_horizontal(self, event):
+        if not self._preview_pages:
+            return
+        delta = int(-1 * (event.delta / 120))
+        self._preview_canvas.xview_scroll(delta, "units")
+
+    def _on_preview_drag_start(self, event):
+        if not self._preview_pages:
+            return
+        self._preview_canvas.scan_mark(event.x, event.y)
+
+    def _on_preview_drag_move(self, event):
+        if not self._preview_pages:
+            return
+        self._preview_canvas.scan_dragto(event.x, event.y, gain=1)
+
     def _render_preview_page(self):
         if not self._preview_pages:
             return
@@ -989,7 +1197,9 @@ class DesktopApp(tk.Tk):
         width = max(self._preview_canvas.winfo_width(), 1)
         page = self._preview_pages[self._preview_page_index]
         img_width, img_height = page.size
-        scale = (width / img_width) * self._preview_zoom
+
+        fit_width_scale = (width / img_width)
+        scale = fit_width_scale * self._preview_zoom
 
         new_size = (
             max(int(img_width * scale), 1),
@@ -1010,7 +1220,11 @@ class DesktopApp(tk.Tk):
         self._preview_canvas.configure(
             scrollregion=(0, 0, resized.size[0], resized.size[1])
         )
-        self._preview_canvas.yview_moveto(0)
+
+        if self._preview_reset_scroll:
+            self._preview_canvas.xview_moveto(0)
+            self._preview_canvas.yview_moveto(0)
+            self._preview_reset_scroll = False
 
         if self._preview_placeholder:
             self._preview_canvas.itemconfigure(self._preview_placeholder, state="hidden")
@@ -1018,7 +1232,7 @@ class DesktopApp(tk.Tk):
         self._update_preview_nav()
 
     def _set_preview_zoom(self, zoom):
-        self._preview_zoom = max(0.3, min(2.5, zoom))
+        self._preview_zoom = max(0.3, min(self._preview_zoom_max, zoom))
         self._render_preview_page()
 
     def _update_preview_nav(self):
@@ -1057,18 +1271,25 @@ class DesktopApp(tk.Tk):
                 self._write_log(f"Preview PDF nao encontrado: {path}\n", tag="warn")
                 return
 
+            eh_fazer_ponto = "FAZER PONTO" in self._preview_mode_hint.upper()
+            dpi_preview = 300 if eh_fazer_ponto else 200
+
             pages = None
             erros = []
 
             try:
-                pages = convert_from_path(str(path))
+                pages = convert_from_path(str(path), dpi=dpi_preview)
             except Exception as exc:
                 erros.append(str(exc))
 
             if not pages:
                 for poppler_dir in self._poppler_paths_candidatos():
                     try:
-                        pages = convert_from_path(str(path), poppler_path=str(poppler_dir))
+                        pages = convert_from_path(
+                            str(path),
+                            dpi=dpi_preview,
+                            poppler_path=str(poppler_dir),
+                        )
                         if pages:
                             break
                     except Exception as exc:
@@ -1087,10 +1308,79 @@ class DesktopApp(tk.Tk):
             self._preview_pages = pages
             self._preview_page_index = 0
             self._preview_pdf_path = path
+            self._preview_reset_scroll = True
+
+            if eh_fazer_ponto:
+                self._preview_zoom_max = 4.5
+
+                # Remove margens brancas exageradas antes de exibir.
+                self._preview_pages = [
+                    self._trim_preview_image_whitespace(p) for p in self._preview_pages
+                ]
+
+                # Fazer Ponto: une paginas em uma imagem vertical unica.
+                if len(self._preview_pages) > 1:
+                    merged = self._merge_preview_pages_vertically(self._preview_pages)
+                    self._preview_pages = [self._trim_preview_image_whitespace(merged)]
+                    self._preview_page_index = 0
+
+                # Conteudo mais proximo e navegacao horizontal por arraste.
+                self._preview_zoom = 2.15
+                self._preview_hscroll.pack_forget()
+            else:
+                self._preview_zoom_max = 2.5
+                self._preview_zoom = 1.0
+                self._preview_hscroll.pack_forget()
+
             self._render_preview_page()
+
+            if eh_fazer_ponto:
+                # Garante inicio no canto esquerdo apos o layout final do canvas.
+                self.after(0, lambda: self._preview_canvas.xview_moveto(0))
+
             self._notebook.select(1)
         except Exception as exc:
             self._write_log(f"Falha ao renderizar PDF: {exc}\n", tag="warn")
+
+    def _merge_preview_pages_vertically(self, pages):
+        if not pages:
+            raise ValueError("Lista de paginas vazia")
+        if len(pages) == 1:
+            return pages[0]
+
+        largura = max(p.width for p in pages)
+        altura_total = sum(p.height for p in pages)
+        merged = Image.new("RGB", (largura, altura_total), "white")
+
+        y = 0
+        for page in pages:
+            x = max((largura - page.width) // 2, 0)
+            merged.paste(page, (x, y))
+            y += page.height
+
+        return merged
+
+    def _trim_preview_image_whitespace(self, image):
+        """
+        Remove bordas brancas do preview para aproximar o conteudo util.
+        """
+        try:
+            gray = image.convert("L")
+            # Considera branco acima de ~245 como fundo.
+            mask = gray.point(lambda p: 255 if p < 245 else 0)
+            bbox = mask.getbbox()
+            if not bbox:
+                return image
+
+            left, top, right, bottom = bbox
+            pad = 18
+            left = max(0, left - pad)
+            top = max(0, top - pad)
+            right = min(image.width, right + pad)
+            bottom = min(image.height, bottom + pad)
+            return image.crop((left, top, right, bottom))
+        except Exception:
+            return image
 
     def _poppler_paths_candidatos(self):
         candidatos = []
@@ -1160,9 +1450,14 @@ class DesktopApp(tk.Tk):
         self._preview_image = None
         self._preview_pdf_path = None
         self._preview_pages = []
+        self._preview_mode_hint = ""
+        self._preview_reset_scroll = False
         self._preview_zoom = 1.0
+        self._preview_zoom_max = 2.5
         self._preview_page_index = 0
         self._preview_canvas.delete("preview_img")
+        self._preview_hscroll.pack_forget()
+        self._preview_canvas.xview_moveto(0)
         if self._preview_placeholder:
             self._preview_canvas.itemconfigure(self._preview_placeholder, state="normal")
 

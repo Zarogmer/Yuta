@@ -499,13 +499,249 @@ def gerar_pdf_workbook_inteiro(wb, pasta_saida: Path, nome_base: str) -> Path:
     return caminho_pdf
 
 
+
+
+def _encontrar_impressora_pdf():
+    """Localiza a impressora Microsoft PDF instalada (PT-BR ou EN)."""
+    candidatos = ["Microsoft Imprimir para PDF", "Microsoft Print to PDF"]
+    try:
+        import win32print
+        instaladas = {p[2] for p in win32print.EnumPrinters(
+            win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS
+        )}
+        for c in candidatos:
+            if c in instaladas:
+                return c
+    except Exception:
+        pass
+    try:
+        import subprocess
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Get-Printer | Select-Object -ExpandProperty Name"],
+            capture_output=True, text=True, timeout=10,
+        )
+        instaladas = {ln.strip() for ln in r.stdout.splitlines() if ln.strip()}
+        for c in candidatos:
+            if c in instaladas:
+                return c
+    except Exception:
+        pass
+    return None
+
+
+def _imprimir_wb_para_pdf(wb, caminho_pdf, ignorar_abas=()):
+    """
+    Gera PDF usando PrintOut + Microsoft Print to PDF.
+    Reproduz exatamente o resultado do menu Imprimir > Microsoft Imprimir para PDF
+    do Excel, respeitando o PageSetup original do template (papel, margens, zoom).
+    """
+    impressora = _encontrar_impressora_pdf()
+    if impressora is None:
+        raise RuntimeError(
+            "Impressora 'Microsoft Imprimir para PDF' nao encontrada. "
+            "Verifique se o recurso esta habilitado no Windows."
+        )
+
+    caminho_pdf = Path(caminho_pdf)
+    if caminho_pdf.exists():
+        caminho_pdf.unlink()
+
+    app = wb.app
+    impressora_anterior = app.api.ActivePrinter
+
+    vis_orig = {}
+    for sh in wb.sheets:
+        vis_orig[sh.name] = sh.api.Visible
+        if sh.name.strip().lower() in {x.strip().lower() for x in ignorar_abas}:
+            sh.api.Visible = False
+
+    aba_ativa = None
+    for sh in wb.sheets:
+        if sh.api.Visible:
+            aba_ativa = sh
+            break
+    if aba_ativa:
+        aba_ativa.activate()
+
+    try:
+        app.api.ActivePrinter = impressora
+        wb.api.PrintOut(PrintToFile=True, PrFileName=str(caminho_pdf))
+        print(f"PDF gerado via PrintOut: {caminho_pdf}")
+        return caminho_pdf
+    finally:
+        app.api.ActivePrinter = impressora_anterior
+        for sh in wb.sheets:
+            if sh.name in vis_orig:
+                sh.api.Visible = vis_orig[sh.name]
+
+
+def _imprimir_ws_para_pdf(ws, caminho_pdf):
+    """
+    Gera PDF de uma unica aba usando PrintOut + Microsoft Print to PDF.
+    """
+    impressora = _encontrar_impressora_pdf()
+    if impressora is None:
+        raise RuntimeError(
+            "Impressora 'Microsoft Imprimir para PDF' nao encontrada. "
+            "Verifique se o recurso esta habilitado no Windows."
+        )
+
+    caminho_pdf = Path(caminho_pdf)
+    if caminho_pdf.exists():
+        caminho_pdf.unlink()
+
+    app = ws.book.app
+    impressora_anterior = app.api.ActivePrinter
+    ws.activate()
+
+    try:
+        app.api.ActivePrinter = impressora
+        ws.api.PrintOut(PrintToFile=True, PrFileName=str(caminho_pdf))
+        print(f"PDF gerado via PrintOut: {caminho_pdf}")
+        return caminho_pdf
+    finally:
+        app.api.ActivePrinter = impressora_anterior
+
+
+def _atualizar_print_area_ws(ws, min_linhas=40, min_colunas=8, max_linhas_scan=260, max_colunas_scan=40):
+    """
+    Detecta a area com conteudo real e atualiza APENAS o PrintArea.
+    Nao altera PaperSize, Zoom ou FitToPages (preserva as configuracoes do template).
+    Necessario apos insercao dinamica de linhas (ex: REPORT VIGIA).
+    """
+    try:
+        valores = ws.range((1, 1), (max_linhas_scan, max_colunas_scan)).value
+        if not isinstance(valores, list):
+            valores = [[valores]]
+        ultima_linha = min_linhas
+        ultima_coluna = min_colunas
+        for i, linha in enumerate(valores, start=1):
+            if not isinstance(linha, list):
+                linha = [linha]
+            for j, valor in enumerate(linha, start=1):
+                if valor not in (None, ""):
+                    ultima_linha = max(ultima_linha, i)
+                    ultima_coluna = max(ultima_coluna, j)
+        ultima_linha = min(ultima_linha + 2, max_linhas_scan)
+        ultima_coluna = min(ultima_coluna + 1, max_colunas_scan)
+        area = ws.api.Range(
+            ws.api.Cells(1, 1),
+            ws.api.Cells(ultima_linha, ultima_coluna),
+        )
+        ws.api.PageSetup.PrintArea = area.Address
+    except Exception as e:
+        print(f"Nao foi possivel atualizar PrintArea da aba '{ws.name}': {e}")
+
+
+def _configurar_pagina_a4_ws(ws, min_linhas=40, min_colunas=8,
+                            max_linhas_scan=260, max_colunas_scan=40,
+                            uma_pagina=True):
+    """
+    Configura a aba para impressao em A4 com zoom CALCULADO para preencher a folha.
+
+    O template pode usar papel Executivo ou outro tamanho menor que A4.
+    FitToPagesWide/FitToPagesTall so escalam para BAIXO, nunca para cima.
+    Por isso, calculamos o zoom explicito baseado nas dimensoes reais do conteudo
+    vs. area imprimivel da folha A4, garantindo que o conteudo PREENCHA a pagina.
+
+    Args:
+        uma_pagina: True  = zoom limitado para caber em 1 pagina (FRONT VIGIA)
+                    False = zoom so preenche largura, permite multiplas paginas (REPORT VIGIA)
+    """
+    xlPortrait = 1
+    xlPaperA4 = 9
+
+    try:
+        # -- 1. Detectar area de conteudo real --
+        valores = ws.range((1, 1), (max_linhas_scan, max_colunas_scan)).value
+        if not isinstance(valores, list):
+            valores = [[valores]]
+
+        ultima_linha = min_linhas
+        ultima_coluna = min_colunas
+
+        for i, linha_vals in enumerate(valores, start=1):
+            if not isinstance(linha_vals, list):
+                linha_vals = [linha_vals]
+            for j, valor in enumerate(linha_vals, start=1):
+                if valor not in (None, ""):
+                    ultima_linha = max(ultima_linha, i)
+                    ultima_coluna = max(ultima_coluna, j)
+
+        # padding para nao cortar bordas/rodape
+        ultima_linha = min(ultima_linha + 2, max_linhas_scan)
+        ultima_coluna = min(ultima_coluna + 1, max_colunas_scan)
+
+        area = ws.api.Range(
+            ws.api.Cells(1, 1),
+            ws.api.Cells(ultima_linha, ultima_coluna),
+        )
+
+        # -- 2. Margens estreitas (mesmas do preset "Margens Estreitas" do Excel) --
+        app = ws.book.app
+        margem_lr = app.api.CentimetersToPoints(0.64)    # esquerda/direita
+        margem_tb = app.api.CentimetersToPoints(1.91)    # topo/base
+        margem_hf = app.api.CentimetersToPoints(0.76)    # cabecalho/rodape
+
+        # A4 em pontos (21 x 29.7 cm)
+        largura_a4 = app.api.CentimetersToPoints(21.0)
+        altura_a4 = app.api.CentimetersToPoints(29.7)
+
+        largura_imprimivel = largura_a4 - 2 * margem_lr
+        altura_imprimivel = altura_a4 - 2 * margem_tb
+
+        # -- 3. Medir dimensoes REAIS do conteudo em pontos --
+        largura_conteudo = area.Width   # soma das larguras das colunas
+        altura_conteudo = area.Height   # soma das alturas das linhas
+
+        # -- 4. Calcular zoom para preencher A4 --
+        # Zoom por largura: conteudo deve preencher a largura imprimivel
+        zoom_w = (largura_imprimivel / largura_conteudo * 100) if largura_conteudo > 0 else 100
+
+        if uma_pagina and altura_conteudo > 0:
+            # Para documentos de 1 pagina, limitar zoom pela altura tambem
+            zoom_h = (altura_imprimivel / altura_conteudo * 100)
+            zoom = min(zoom_w, zoom_h)
+        else:
+            # Multi-pagina: so preenche largura, altura pode gerar N paginas
+            zoom = zoom_w
+
+        # Excel aceita zoom entre 10% e 400%
+        zoom = min(max(int(zoom), 10), 400)
+
+        # -- 5. Aplicar PageSetup --
+        ps = ws.api.PageSetup
+        ps.PaperSize = xlPaperA4
+        ps.Orientation = xlPortrait
+        ps.TopMargin = margem_tb
+        ps.BottomMargin = margem_tb
+        ps.LeftMargin = margem_lr
+        ps.RightMargin = margem_lr
+        ps.HeaderMargin = margem_hf
+        ps.FooterMargin = margem_hf
+        # Zoom explicito (desativa FitToPages automaticamente)
+        # FitToPages so escala para BAIXO; zoom explicito preenche A4 corretamente
+        ps.Zoom = zoom
+        ps.CenterHorizontally = True
+        ps.CenterVertically = uma_pagina
+        ps.PrintArea = area.Address
+
+        print(f"[PageSetup] {ws.name}: area={area.Address}, "
+              f"conteudo={largura_conteudo:.0f}x{altura_conteudo:.0f}pts, "
+              f"zoom={zoom}%")
+
+    except Exception as e:
+        print(f"Nao foi possivel configurar pagina A4 da aba \'{ws.name}\': {e}")
+
+
 def gerar_pdf_faturamento_completo(wb, pasta_saida: Path, nome_base: str) -> Path:
     caminho_pdf = pasta_saida / f"{nome_base}.pdf"
 
     if caminho_pdf.exists():
         caminho_pdf.unlink()
 
-    # 🔒 Oculta aba NF (se existir)
+    # Oculta aba NF (nao vai para o PDF)
     aba_nf = None
     for ws in wb.sheets:
         if ws.name.strip().upper() == "NF":
@@ -513,28 +749,29 @@ def gerar_pdf_faturamento_completo(wb, pasta_saida: Path, nome_base: str) -> Pat
             ws.api.Visible = False
             break
 
-    # 🔥 Remove qualquer Print_Area escondido
-    try:
-        for nome in list(wb.api.Names):
-            if nome.Name.lower() == "print_area":
-                nome.Delete()
-    except:
-        pass
+    # Configura cada aba visivel para A4 com zoom calculado
+    # REPORT VIGIA pode ter multiplas paginas; demais abas ficam em 1 pagina
+    for ws in wb.sheets:
+        if ws.api.Visible:
+            nome_aba = ws.name.strip().upper()
+            eh_report = "REPORT" in nome_aba
+            _configurar_pagina_a4_ws(ws, uma_pagina=not eh_report)
 
-    # 📄 Exporta workbook inteiro
+    # Exporta via ExportAsFixedFormat (respeita PrintArea e Zoom definidos acima)
     wb.api.ExportAsFixedFormat(
-        Type=0,  # PDF
+        Type=0,
         Filename=str(caminho_pdf),
         Quality=0,
         IncludeDocProperties=True,
-        IgnorePrintAreas=True,
-        OpenAfterPublish=False
+        IgnorePrintAreas=False,
+        OpenAfterPublish=False,
     )
 
-    # 🔓 Reexibe NF
+    # Reexibe NF
     if aba_nf:
         aba_nf.api.Visible = True
 
+    print(f"PDF gerado: {caminho_pdf}")
     return caminho_pdf
 
 
@@ -555,60 +792,55 @@ def extrair_identidade_navio(pasta_navio: Path) -> tuple[str, str]:
 def gerar_pdf_do_wb_aberto(wb, pasta_saida, nome_base, ignorar_abas=("nf",)):
     caminho_pdf = Path(pasta_saida) / f"{nome_base}.pdf"
 
-    # 1) se existir e estiver aberto, já avisa o motivo
     if caminho_pdf.exists():
         try:
             caminho_pdf.unlink()
         except Exception as e:
-            raise RuntimeError(f"PDF está aberto/travado e não pode ser sobrescrito: {caminho_pdf}") from e
+            raise RuntimeError(f"PDF esta aberto/travado: {caminho_pdf}") from e
 
     app = wb.app
     app.api.DisplayAlerts = False
 
-    # 2) guarda visibilidade, oculta as que não devem sair no PDF
+    # Guarda visibilidade e oculta abas ignoradas
     vis_orig = {}
     for sh in wb.sheets:
         nome_norm = sh.name.strip().lower()
         vis_orig[sh.name] = sh.api.Visible
         if nome_norm in {x.strip().lower() for x in ignorar_abas}:
-            sh.api.Visible = False  # oculta NF
+            sh.api.Visible = False
 
     try:
-        # 3) ativa uma aba visível (Excel odeia export sem sheet ativa)
-        aba_ativa = None
+        # Ativa uma aba visivel
         for sh in wb.sheets:
-            if sh.api.Visible:  # True / -1
-                aba_ativa = sh
+            if sh.api.Visible:
+                sh.activate()
                 break
-        if aba_ativa:
-            aba_ativa.activate()
 
-        # 4) exporta o workbook (sem as abas ocultas)
+        # Configura cada aba visivel para A4 com zoom calculado
+        for sh in wb.sheets:
+            if sh.api.Visible:
+                nome_aba = sh.name.strip().upper()
+                eh_report = "REPORT" in nome_aba
+                _configurar_pagina_a4_ws(sh, uma_pagina=not eh_report)
+
+        # Exporta via ExportAsFixedFormat
         wb.api.ExportAsFixedFormat(
-            Type=0,  # xlTypePDF
+            Type=0,
             Filename=str(caminho_pdf),
-            Quality=0,  # xlQualityStandard
+            Quality=0,
             IncludeDocProperties=True,
             IgnorePrintAreas=False,
-            OpenAfterPublish=False
+            OpenAfterPublish=False,
         )
 
-        print(f"📄 PDF gerado: {caminho_pdf}")
+        print(f"PDF gerado: {caminho_pdf}")
         return caminho_pdf
 
     finally:
-        # 5) restaura visibilidade original
         for sh in wb.sheets:
             if sh.name in vis_orig:
                 sh.api.Visible = vis_orig[sh.name]
 
-
-
-
-
-
-# ==============================
-# CLASSE 1: FATURAMENTO COMPLETO
 
 class FaturamentoCompleto:
     def __init__(self, g_logic=1):
@@ -1126,8 +1358,21 @@ class FaturamentoCompleto:
     def gerar_pdf_report_vigia_separado(self, pasta_navio: Path, dn: str, navio: str):
         ws_report = self.wb2.sheets["REPORT VIGIA"]
 
+        # Configura A4 com zoom calculado (multi-pagina: so preenche largura)
+        _configurar_pagina_a4_ws(
+            ws_report,
+            min_linhas=40,
+            min_colunas=8,
+            max_linhas_scan=260,
+            max_colunas_scan=30,
+            uma_pagina=False,
+        )
+
         nome_pdf = f"REPORT VIGIA - DN {dn} - MV {navio}.pdf"
         caminho_pdf = pasta_navio / nome_pdf
+
+        if caminho_pdf.exists():
+            caminho_pdf.unlink()
 
         ws_report.api.ExportAsFixedFormat(
             Type=0,
@@ -1135,11 +1380,10 @@ class FaturamentoCompleto:
             Quality=0,
             IncludeDocProperties=True,
             IgnorePrintAreas=False,
-            OpenAfterPublish=False
+            OpenAfterPublish=False,
         )
 
-        print(f"📑 PDF REPORT VIGIA salvo em: {caminho_pdf}")
-
+        print(f"PDF REPORT VIGIA salvo em: {caminho_pdf}")
 
 
     def processar_MMO(self, wb_navio, wb_cliente):

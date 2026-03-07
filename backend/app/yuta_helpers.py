@@ -706,17 +706,49 @@ def gerar_pdf(caminho_excel, pasta_saida, nome_base, ws=None):
         caminho_pdf = pasta_saida / f"{nome_base}.pdf"
 
         if ws is not None:
+            ws_export = None
+            ws_alvo_nome = str(getattr(ws, "name", "")).strip().upper()
+            for sh in wb.sheets:
+                if str(sh.name).strip().upper() == ws_alvo_nome:
+                    ws_export = sh
+                    break
+
+            if ws_export is None and len(wb.sheets) == 1:
+                ws_export = wb.sheets[0]
+
+            if ws_export is None:
+                raise RuntimeError(
+                    f"Aba alvo nao encontrada no workbook salvo: {getattr(ws, 'name', '<sem nome>')}"
+                )
+
             try:
-                ajustar_layout_pdf_por_aba(ws)
+                ajustar_layout_pdf_por_aba(ws_export)
             except Exception:
                 pass
-            ws.api.ExportAsFixedFormat(Type=0, Filename=str(caminho_pdf))
+
+            ws_export.activate()
+            ws_export.api.ExportAsFixedFormat(
+                Type=0,
+                Filename=str(caminho_pdf),
+                Quality=0,
+                IncludeDocProperties=True,
+                IgnorePrintAreas=False,
+                OpenAfterPublish=False,
+            )
         else:
             try:
                 ajustar_layout_todas_abas_visiveis_no_wb(wb)
             except Exception:
                 pass
-            wb.api.ExportAsFixedFormat(Type=0, Filename=str(caminho_pdf))
+
+            wb.api.ExportAsFixedFormat(
+                Type=0,
+                Filename=str(caminho_pdf),
+                Quality=0,
+                IncludeDocProperties=True,
+                IgnorePrintAreas=False,
+                OpenAfterPublish=False,
+            )
 
         print(f"📄 PDF gerado: {caminho_pdf}")
         return caminho_pdf
@@ -752,38 +784,247 @@ def gerar_pdf_workbook_inteiro(wb, pasta_saida: Path, nome_base: str) -> Path:
     return caminho_pdf
 
 
-def ajustar_layout_report_vigia(ws_report):
+# Dimensoes de papel em cm  {xlPaperSize: (largura_cm, altura_cm)}
+_PAPER_DIMS_CM = {
+    1: (21.59, 27.94),   # Letter
+    5: (21.59, 35.56),   # Legal
+    7: (18.415, 26.67),  # Executive
+    8: (29.7, 42.0),     # A3
+    9: (21.0, 29.7),     # A4
+    11: (21.0, 29.7),    # A4 Small
+}
+
+
+def _normalize_2d(values):
+    if isinstance(values, list):
+        if values and isinstance(values[0], list):
+            return values
+        return [values]
+    return [[values]]
+
+
+def _tem_conteudo_celula(valor, formula):
+    if formula not in (None, ""):
+        return True
+    if valor is None:
+        return False
+    if isinstance(valor, str):
+        return valor.strip() != ""
+    return True
+
+
+def detectar_area_util_planilha(
+    ws,
+    min_linhas=40,
+    min_colunas=8,
+    max_linhas_scan=400,
+    max_colunas_scan=60,
+):
     """
-    Padroniza o layout de impressão da aba REPORT VIGIA para evitar corte no PDF.
+    Detecta a area com conteudo real (valor ou formula) sem confiar em UsedRange.
+    Isso evita encolhimento do PDF por colunas/linhas fantasmas no PrintArea.
+    """
+    try:
+        used = ws.api.UsedRange
+        used_last_row = int(used.Row + used.Rows.Count - 1)
+        used_last_col = int(used.Column + used.Columns.Count - 1)
+    except Exception:
+        used_last_row = min_linhas
+        used_last_col = min_colunas
+
+    scan_rows = max(min_linhas, min(max_linhas_scan, used_last_row + 8))
+    scan_cols = max(min_colunas, min(max_colunas_scan, used_last_col + 4))
+
+    valores = _normalize_2d(ws.range((1, 1), (scan_rows, scan_cols)).value)
+    formulas = _normalize_2d(ws.range((1, 1), (scan_rows, scan_cols)).formula)
+
+    ultima_linha = min_linhas
+    ultima_coluna = min_colunas
+
+    for i in range(scan_rows):
+        linha_vals = valores[i] if i < len(valores) else []
+        linha_for = formulas[i] if i < len(formulas) else []
+        for j in range(scan_cols):
+            valor = linha_vals[j] if j < len(linha_vals) else None
+            formula = linha_for[j] if j < len(linha_for) else None
+            if _tem_conteudo_celula(valor, formula):
+                ultima_linha = max(ultima_linha, i + 1)
+                ultima_coluna = max(ultima_coluna, j + 1)
+
+    # Pequeno padding para evitar corte de borda/rodape
+    ultima_linha = min(ultima_linha + 2, scan_rows)
+    ultima_coluna = min(ultima_coluna + 1, scan_cols)
+
+    return {
+        "last_row": max(ultima_linha, min_linhas),
+        "last_col": max(ultima_coluna, min_colunas),
+        "scan_rows": scan_rows,
+        "scan_cols": scan_cols,
+        "used_last_row": used_last_row,
+        "used_last_col": used_last_col,
+    }
+
+
+def limpar_planilha_para_exportacao(
+    ws,
+    min_linhas=40,
+    min_colunas=8,
+    max_linhas_scan=400,
+    max_colunas_scan=60,
+):
+    """
+    Limpa configuracoes antigas de impressao e redefine PrintArea pela area util.
+    """
+    info = detectar_area_util_planilha(
+        ws,
+        min_linhas=min_linhas,
+        min_colunas=min_colunas,
+        max_linhas_scan=max_linhas_scan,
+        max_colunas_scan=max_colunas_scan,
+    )
+
+    area = ws.api.Range(
+        ws.api.Cells(1, 1),
+        ws.api.Cells(info["last_row"], info["last_col"]),
+    )
+
+    ps = ws.api.PageSetup
+    try:
+        ps.PrintArea = ""
+    except Exception:
+        pass
+
+    ps.PrintArea = area.Address
+    info["print_area"] = area.Address
+    return info
+
+
+def _log_layout_debug(ws, etapa, info=None):
+    try:
+        ps = ws.api.PageSetup
+        paper = int(ps.PaperSize)
+        fit_w = ps.FitToPagesWide
+        fit_h = ps.FitToPagesTall
+        zoom = ps.Zoom
+        print(
+            f"[PDF-DEBUG] etapa={etapa} aba='{ws.name}' paper={paper} "
+            f"print_area='{ps.PrintArea}' zoom={zoom} fitW={fit_w} fitH={fit_h} "
+            f"centerH={ps.CenterHorizontally} centerV={ps.CenterVertically}"
+        )
+        if info:
+            print(
+                f"[PDF-DEBUG] etapa={etapa} aba='{ws.name}' "
+                f"scan={info.get('scan_rows')}x{info.get('scan_cols')} "
+                f"used_last={info.get('used_last_row')}x{info.get('used_last_col')} "
+                f"detected_last={info.get('last_row')}x{info.get('last_col')}"
+            )
+    except Exception as exc:
+        print(f"[PDF-DEBUG] falha ao logar layout da aba '{ws.name}': {exc}")
+
+
+def _aplicar_page_setup_a4(ws, uma_pagina=True):
+    """
+    Aplica configuracao de impressao equivalente ao preview manual do Excel.
+
+    Ajusta para A4 e recalcula PrintArea pela area real para evitar PDF reduzido.
     """
     xlPortrait = 1
     xlPaperA4 = 9
 
+    app = ws.book.app
+    ps = ws.api.PageSetup
+
+    info = limpar_planilha_para_exportacao(
+        ws,
+        min_linhas=45 if uma_pagina else 40,
+        min_colunas=8,
+        max_linhas_scan=360,
+        max_colunas_scan=60,
+    )
+
+    # Margens estreitas (preset "Narrow" do Excel)
+    margem_lr = app.api.CentimetersToPoints(0.64)
+    margem_tb = app.api.CentimetersToPoints(1.91)
+    margem_hf = app.api.CentimetersToPoints(0.76)
+
+    ps.Orientation = xlPortrait
+    ps.PaperSize = xlPaperA4
+    ps.TopMargin = margem_tb
+    ps.BottomMargin = margem_tb
+    ps.LeftMargin = margem_lr
+    ps.RightMargin = margem_lr
+    ps.HeaderMargin = margem_hf
+    ps.FooterMargin = margem_hf
+
+    # FitToPages exige Zoom desativado.
+    ps.Zoom = False
+    ps.FitToPagesWide = 1
+    ps.FitToPagesTall = 1 if uma_pagina else False
+
+    ps.CenterHorizontally = True
+    # Centralizacao vertical costuma aumentar espaco em branco perceptivel.
+    ps.CenterVertically = False
+
+    _log_layout_debug(ws, "page_setup_aplicado", info)
+
+
+def ajustar_layout_report_vigia(ws_report):
+    """
+    Configura layout de impressao A4 para aba REPORT VIGIA.
+    Multi-pagina: zoom preenche largura, altura gera N paginas.
+    """
     try:
-        ultima_linha, ultima_coluna = _detectar_area_util_planilha(
-            ws_report,
-            min_linhas=40,
-            min_colunas=14,
-            max_linhas_scan=260,
-            max_colunas_scan=40,
-        )
+        app = ws_report.book.app
+        ps = ws_report.api.PageSetup
+
+        # REPORT VIGIA varia bastante de tamanho. Para nao cortar,
+        # usamos o UsedRange real da aba como base do PrintArea.
+        used = ws_report.api.UsedRange
+        first_row = int(used.Row)
+        first_col = int(used.Column)
+        last_row = int(used.Row + used.Rows.Count - 1)
+        last_col = int(used.Column + used.Columns.Count - 1)
+
+        # Garantia minima para manter cabecalho/estrutura.
+        last_row = max(last_row, 40)
+        last_col = max(last_col, 8)
 
         area = ws_report.api.Range(
             ws_report.api.Cells(1, 1),
-            ws_report.api.Cells(ultima_linha, ultima_coluna),
+            ws_report.api.Cells(last_row, last_col),
         )
 
-        page_setup = ws_report.api.PageSetup
-        page_setup.Zoom = False
-        page_setup.FitToPagesWide = 1
-        page_setup.FitToPagesTall = False
-        page_setup.Orientation = xlPortrait
-        page_setup.PaperSize = xlPaperA4
-        page_setup.CenterHorizontally = True
-        page_setup.CenterVertically = False
-        page_setup.PrintArea = area.Address
+        # Margens estreitas (preset "Narrow" do Excel)
+        margem_lr = app.api.CentimetersToPoints(0.64)
+        margem_tb = app.api.CentimetersToPoints(1.91)
+        margem_hf = app.api.CentimetersToPoints(0.76)
+
+        xlPortrait = 1
+        xlPaperA4 = 9
+
+        ps.Orientation = xlPortrait
+        ps.PaperSize = xlPaperA4
+        ps.TopMargin = margem_tb
+        ps.BottomMargin = margem_tb
+        ps.LeftMargin = margem_lr
+        ps.RightMargin = margem_lr
+        ps.HeaderMargin = margem_hf
+        ps.FooterMargin = margem_hf
+
+        # Cada aba em paginas proprias; REPORT pode quebrar em varias folhas.
+        ps.Zoom = False
+        ps.FitToPagesWide = 1
+        ps.FitToPagesTall = False
+        ps.CenterHorizontally = True
+        ps.CenterVertically = False
+        ps.PrintArea = area.Address
+
+        print(
+            f"[PDF-DEBUG] REPORT VIGIA used_range={first_row}:{first_col} ate "
+            f"{last_row}:{last_col} | print_area={area.Address}"
+        )
     except Exception as e:
-        print(f"⚠️ Não foi possível ajustar layout do REPORT VIGIA: {e}")
+        print(f"Nao foi possivel ajustar layout do REPORT VIGIA: {e}")
 
 
 def ajustar_layout_report_vigia_no_wb(wb):
@@ -793,73 +1034,15 @@ def ajustar_layout_report_vigia_no_wb(wb):
             break
 
 
-def _detectar_area_util_planilha(
-    ws,
-    min_linhas=40,
-    min_colunas=8,
-    max_linhas_scan=220,
-    max_colunas_scan=40,
-):
-    """
-    Detecta a área útil por conteúdo real (evita UsedRange inflado por formatação).
-    """
-    try:
-        valores = ws.range((1, 1), (max_linhas_scan, max_colunas_scan)).value
-        if not isinstance(valores, list):
-            valores = [[valores]]
-
-        ultima_linha = 1
-        ultima_coluna = 1
-
-        for i, linha in enumerate(valores, start=1):
-            if not isinstance(linha, list):
-                linha = [linha]
-            for j, valor in enumerate(linha, start=1):
-                if valor not in (None, ""):
-                    ultima_linha = max(ultima_linha, i)
-                    ultima_coluna = max(ultima_coluna, j)
-
-        # pequeno padding para não cortar bordas/rodapé por 1-2 células
-        ultima_linha = min(ultima_linha + 2, max_linhas_scan)
-        ultima_coluna = min(ultima_coluna + 1, max_colunas_scan)
-
-        return max(ultima_linha, min_linhas), max(ultima_coluna, min_colunas)
-    except Exception:
-        return min_linhas, min_colunas
-
-
 def ajustar_layout_front_vigia(ws_front):
     """
-    Padroniza a impressão da FRONT VIGIA para reduzir variação entre máquinas/usuários.
+    Configura layout de impressao A4 para aba FRONT VIGIA.
+    Uma pagina: zoom preenche A4 garantindo que caiba em 1 folha.
     """
-    xlPortrait = 1
-    xlPaperA4 = 9
-
     try:
-        ultima_linha, ultima_coluna = _detectar_area_util_planilha(
-            ws_front,
-            min_linhas=45,
-            min_colunas=14,
-            max_linhas_scan=180,
-            max_colunas_scan=30,
-        )
-
-        area = ws_front.api.Range(
-            ws_front.api.Cells(1, 1),
-            ws_front.api.Cells(ultima_linha, ultima_coluna),
-        )
-
-        page_setup = ws_front.api.PageSetup
-        page_setup.Zoom = False
-        page_setup.FitToPagesWide = 1
-        page_setup.FitToPagesTall = False
-        page_setup.Orientation = xlPortrait
-        page_setup.PaperSize = xlPaperA4
-        page_setup.CenterHorizontally = True
-        page_setup.CenterVertically = False
-        page_setup.PrintArea = area.Address
+        _aplicar_page_setup_a4(ws_front, uma_pagina=True)
     except Exception as e:
-        print(f"⚠️ Não foi possível ajustar layout da FRONT VIGIA: {e}")
+        print(f"Nao foi possivel ajustar layout da FRONT VIGIA: {e}")
 
 
 def ajustar_layout_front_vigia_no_wb(wb):
@@ -869,41 +1052,15 @@ def ajustar_layout_front_vigia_no_wb(wb):
             break
 
 
-def ajustar_layout_planilha_generica(
-    ws,
-    min_linhas=40,
-    min_colunas=14,
-    max_linhas_scan=260,
-    max_colunas_scan=40,
-):
-    xlPortrait = 1
-    xlPaperA4 = 9
-
+def ajustar_layout_planilha_generica(ws, **_kwargs):
+    """
+    Configura layout A4 generico com zoom calculado.
+    Para abas que nao sao FRONT ou REPORT VIGIA.
+    """
     try:
-        ultima_linha, ultima_coluna = _detectar_area_util_planilha(
-            ws,
-            min_linhas=min_linhas,
-            min_colunas=min_colunas,
-            max_linhas_scan=max_linhas_scan,
-            max_colunas_scan=max_colunas_scan,
-        )
-
-        area = ws.api.Range(
-            ws.api.Cells(1, 1),
-            ws.api.Cells(ultima_linha, ultima_coluna),
-        )
-
-        page_setup = ws.api.PageSetup
-        page_setup.Zoom = False
-        page_setup.FitToPagesWide = 1
-        page_setup.FitToPagesTall = False
-        page_setup.Orientation = xlPortrait
-        page_setup.PaperSize = xlPaperA4
-        page_setup.CenterHorizontally = True
-        page_setup.CenterVertically = False
-        page_setup.PrintArea = area.Address
+        _aplicar_page_setup_a4(ws, uma_pagina=True)
     except Exception as e:
-        print(f"⚠️ Não foi possível ajustar layout da aba '{ws.name}': {e}")
+        print(f"Nao foi possivel ajustar layout da aba '{ws.name}': {e}")
 
 
 def _normalizar_nome_aba_layout(nome: str) -> str:
@@ -951,7 +1108,13 @@ def ajustar_layout_abas_estrategicas_no_wb(wb):
     ajustar_layout_todas_abas_visiveis_no_wb(wb)
 
 
-def gerar_pdf_faturamento_completo(wb, pasta_saida: Path, nome_base: str, apenas_front=False) -> Path:
+def gerar_pdf_faturamento_completo(
+    wb,
+    pasta_saida: Path,
+    nome_base: str,
+    apenas_front=False,
+    aplicar_layout=True,
+) -> Path:
     caminho_pdf = pasta_saida / f"{nome_base}.pdf"
 
     if caminho_pdf.exists():
@@ -967,7 +1130,8 @@ def gerar_pdf_faturamento_completo(wb, pasta_saida: Path, nome_base: str, apenas
                 break
         
         if ws_front:
-            ajustar_layout_pdf_por_aba(ws_front)
+            if aplicar_layout:
+                ajustar_layout_pdf_por_aba(ws_front)
             # Exporta apenas essa aba
             ws_front.api.ExportAsFixedFormat(
                 Type=0,  # PDF
@@ -989,7 +1153,8 @@ def gerar_pdf_faturamento_completo(wb, pasta_saida: Path, nome_base: str, apenas
             ws.api.Visible = False
             break
 
-    ajustar_layout_todas_abas_visiveis_no_wb(wb, ignorar_abas=("NF",))
+    if aplicar_layout:
+        ajustar_layout_todas_abas_visiveis_no_wb(wb, ignorar_abas=("NF",))
 
     # 📄 Exporta workbook inteiro
     wb.api.ExportAsFixedFormat(

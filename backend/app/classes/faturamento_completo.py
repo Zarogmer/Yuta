@@ -11,7 +11,7 @@ import pdfplumber
 from num2words import num2words
 
 from yuta_helpers import (
-    ajustar_layout_abas_estrategicas_no_wb,
+    ajustar_layout_todas_abas_visiveis_no_wb,
     ajustar_layout_report_vigia,
     abrir_workbooks,
     copiar_para_temp_xlwings,
@@ -111,7 +111,8 @@ class FaturamentoCompleto:
                 self.wb2,
                 pasta_navio_rede,
                 nome_base,
-                apenas_front=apenas_front
+                apenas_front=apenas_front,
+                aplicar_layout=True,
             )
 
             # SALVAR EXCEL (local → rede)
@@ -327,15 +328,31 @@ class FaturamentoCompleto:
         except Exception:
             pass
 
-        aba_nf = None
+        # Determinar quais abas exportar
+        # FRONT pode ter nome do cliente em vez de "FRONT VIGIA"
+        nome_front = self.ws_front.name if self.ws_front else None
+        abas_exportar = set()
         for ws in self.wb2.sheets:
-            if ws.name.strip().upper() == "NF":
-                aba_nf = ws
+            n = ws.name.strip().upper()
+            if n == "REPORT VIGIA":
+                abas_exportar.add(ws.name)
+            elif nome_front and ws.name == nome_front:
+                abas_exportar.add(ws.name)
+            elif n == "FRONT VIGIA":
+                abas_exportar.add(ws.name)
+
+        print(f"[Preview] Abas para exportar: {abas_exportar}")
+        print(f"[Preview] Todas as abas: {[ws.name for ws in self.wb2.sheets]}")
+
+        # Guardar visibilidade original e ocultar abas desnecessarias
+        vis_original = {}
+        for ws in self.wb2.sheets:
+            vis_original[ws.name] = ws.api.Visible
+            if ws.name not in abas_exportar:
                 ws.api.Visible = False
-                break
 
         try:
-            ajustar_layout_abas_estrategicas_no_wb(self.wb2)
+            ajustar_layout_todas_abas_visiveis_no_wb(self.wb2)
         except Exception:
             pass
 
@@ -345,12 +362,13 @@ class FaturamentoCompleto:
                 Filename=str(caminho_pdf),
                 Quality=0,
                 IncludeDocProperties=True,
-                IgnorePrintAreas=True,
+                IgnorePrintAreas=False,
                 OpenAfterPublish=False,
             )
         finally:
-            if aba_nf:
-                aba_nf.api.Visible = True
+            for ws in self.wb2.sheets:
+                if ws.name in vis_original:
+                    ws.api.Visible = vis_original[ws.name]
 
         return caminho_pdf
 

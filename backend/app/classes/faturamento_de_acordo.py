@@ -2,7 +2,7 @@ from pathlib import Path
 from tempfile import gettempdir
 
 from yuta_helpers import (
-    ajustar_layout_front_vigia,
+    ajustar_layout_pdf_por_aba,
     abrir_workbooks_de_acordo,
     escrever_de_acordo_nf,
     fechar_workbooks,
@@ -264,6 +264,14 @@ class FaturamentoDeAcordo:
         if caminho_pdf.exists():
             caminho_pdf.unlink()
 
-        ajustar_layout_front_vigia(ws_front)
-        ws_front.api.ExportAsFixedFormat(Type=0, Filename=str(caminho_pdf))
+        ajustar_layout_pdf_por_aba(ws_front)
+        ws_front.activate()
+        ws_front.api.ExportAsFixedFormat(
+            Type=0,
+            Filename=str(caminho_pdf),
+            Quality=0,
+            IncludeDocProperties=True,
+            IgnorePrintAreas=False,
+            OpenAfterPublish=False,
+        )
         return caminho_pdf
