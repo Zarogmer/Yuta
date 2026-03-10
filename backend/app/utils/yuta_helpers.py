@@ -522,7 +522,8 @@ def escrever_nf_faturamento_completo(wb_faturamento, nome_navio, dn, celula="A1"
 
     ano = datetime.now().strftime("%y")
 
-    texto = f"SERVIÃ‡O PRESTADO DE ATENDIMENTO/APOIO AO M/V {nome_navio}\nDN {dn}/{ano}"
+    # Evita problema de codificacao no template/Excel.
+    texto = f"SERVICO PRESTADO DE ATENDIMENTO/APOIO AO M/V {nome_navio}\nDN {dn}/{ano}"
 
     rng = ws_nf.range(area_merge)
 
@@ -922,7 +923,15 @@ def _log_layout_debug(ws, etapa, info=None):
         print(f"[PDF-DEBUG] falha ao logar layout da aba '{ws.name}': {exc}")
 
 
-def _aplicar_page_setup_a4(ws, uma_pagina=True):
+def _aplicar_page_setup_a4(
+    ws,
+    uma_pagina=True,
+    preservar_print_area=False,
+    min_linhas=None,
+    min_colunas=8,
+    max_linhas_scan=360,
+    max_colunas_scan=60,
+):
     """
     Aplica configuracao de impressao equivalente ao preview manual do Excel.
 
@@ -934,13 +943,20 @@ def _aplicar_page_setup_a4(ws, uma_pagina=True):
     app = ws.book.app
     ps = ws.api.PageSetup
 
-    info = limpar_planilha_para_exportacao(
-        ws,
-        min_linhas=45 if uma_pagina else 40,
-        min_colunas=8,
-        max_linhas_scan=360,
-        max_colunas_scan=60,
-    )
+    info = None
+    if not preservar_print_area:
+        info = limpar_planilha_para_exportacao(
+            ws,
+            min_linhas=min_linhas if min_linhas is not None else (45 if uma_pagina else 40),
+            min_colunas=min_colunas,
+            max_linhas_scan=max_linhas_scan,
+            max_colunas_scan=max_colunas_scan,
+        )
+    else:
+        try:
+            info = {"print_area": ps.PrintArea}
+        except Exception:
+            info = None
 
     # Margens estreitas (preset "Narrow" do Excel)
     margem_lr = app.api.CentimetersToPoints(0.64)
@@ -971,28 +987,30 @@ def _aplicar_page_setup_a4(ws, uma_pagina=True):
 def ajustar_layout_report_vigia(ws_report):
     """
     Configura layout de impressao A4 para aba REPORT VIGIA.
-    Multi-pagina: zoom preenche largura, altura gera N paginas.
+    Ajuste dinamico para sempre caber em 1 folha (reduz escala quando necessario).
     """
     try:
         app = ws_report.book.app
         ps = ws_report.api.PageSetup
 
-        # REPORT VIGIA varia bastante de tamanho. Para nao cortar,
-        # usamos o UsedRange real da aba como base do PrintArea.
-        used = ws_report.api.UsedRange
-        first_row = int(used.Row)
-        first_col = int(used.Column)
-        last_row = int(used.Row + used.Rows.Count - 1)
-        last_col = int(used.Column + used.Columns.Count - 1)
-
-        # Garantia minima para manter cabecalho/estrutura.
-        last_row = max(last_row, 40)
-        last_col = max(last_col, 8)
-
-        area = ws_report.api.Range(
-            ws_report.api.Cells(1, 1),
-            ws_report.api.Cells(last_row, last_col),
+        # Detecta area util real para evitar encolhimento excessivo no A4.
+        info = limpar_planilha_para_exportacao(
+            ws_report,
+            min_linhas=40,
+            min_colunas=8,
+            max_linhas_scan=1200,
+            max_colunas_scan=80,
         )
+
+        # Evita corte da ultima borda: adiciona folga pequena ao recorte.
+        last_row_safe = min(int(info.get("last_row", 40)) + 4, int(info.get("scan_rows", 1200)))
+        last_col_safe = min(int(info.get("last_col", 8)) + 1, int(info.get("scan_cols", 80)))
+        area_segura = ws_report.api.Range(
+            ws_report.api.Cells(1, 1),
+            ws_report.api.Cells(last_row_safe, last_col_safe),
+        )
+        ps.PrintArea = area_segura.Address
+        info["print_area"] = area_segura.Address
 
         # Margens estreitas (preset "Narrow" do Excel)
         margem_lr = app.api.CentimetersToPoints(0.64)
@@ -1011,17 +1029,17 @@ def ajustar_layout_report_vigia(ws_report):
         ps.HeaderMargin = margem_hf
         ps.FooterMargin = margem_hf
 
-        # Cada aba em paginas proprias; REPORT pode quebrar em varias folhas.
+        # Sempre caber em 1 pagina para evitar corte quando houver mais linhas.
         ps.Zoom = False
         ps.FitToPagesWide = 1
-        ps.FitToPagesTall = False
+        ps.FitToPagesTall = 1
         ps.CenterHorizontally = True
         ps.CenterVertically = False
-        ps.PrintArea = area.Address
 
         print(
-            f"[PDF-DEBUG] REPORT VIGIA used_range={first_row}:{first_col} ate "
-            f"{last_row}:{last_col} | print_area={area.Address}"
+            f"[PDF-DEBUG] REPORT VIGIA used_range={info.get('used_last_row')}x{info.get('used_last_col')} "
+            f"| detected={info.get('last_row')}x{info.get('last_col')} "
+            f"| print_area={info.get('print_area')}"
         )
     except Exception as e:
         print(f"Nao foi possivel ajustar layout do REPORT VIGIA: {e}")
@@ -1043,6 +1061,32 @@ def ajustar_layout_front_vigia(ws_front):
         _aplicar_page_setup_a4(ws_front, uma_pagina=True)
     except Exception as e:
         print(f"Nao foi possivel ajustar layout da FRONT VIGIA: {e}")
+
+
+def ajustar_layout_quitacao_credit_note(ws):
+    """
+    Enquadra somente a folha principal da aba Quitacao/Credit Note.
+    Ignora blocos auxiliares laterais para nao "puxar" conteudo alem da borda.
+    """
+    try:
+        # Recalcula somente na faixa da folha principal (colunas iniciais).
+        info = limpar_planilha_para_exportacao(
+            ws,
+            min_linhas=45,
+            min_colunas=8,
+            max_linhas_scan=260,
+            max_colunas_scan=10,
+        )
+
+        _aplicar_page_setup_a4(
+            ws,
+            uma_pagina=True,
+            preservar_print_area=True,
+        )
+
+        _log_layout_debug(ws, "quitacao_credit_note", info)
+    except Exception as e:
+        print(f"Nao foi possivel ajustar layout da aba '{ws.name}': {e}")
 
 
 def ajustar_layout_front_vigia_no_wb(wb):
@@ -1079,6 +1123,14 @@ def ajustar_layout_pdf_por_aba(ws):
 
     if "FRONT VIGIA" in nome:
         ajustar_layout_front_vigia(ws)
+        return
+
+    if (
+        nome == "QUITACAO"
+        or "QUITA" in nome
+        or nome == "CREDIT NOTE"
+    ):
+        ajustar_layout_quitacao_credit_note(ws)
         return
 
     ajustar_layout_planilha_generica(ws)

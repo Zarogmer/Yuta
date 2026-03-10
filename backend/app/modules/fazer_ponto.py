@@ -45,6 +45,21 @@ class FazerPonto:
         "00h": ["00h", "18h"]
     }
     BLOCOS = {"06h": 1, "12h": 1, "18h": 2, "00h": 2}
+    MAX_SCAN_LINHAS = 200
+
+    def _limite_scan_planilha(self):
+        """
+        Limita varreduras globais para evitar percorrer 1.048.576 linhas do Excel.
+        """
+        try:
+            ultima_b = self.ws.range("B" + str(self.ws.cells.last_cell.row)).end("up").row
+            ultima_c = self.ws.range("C" + str(self.ws.cells.last_cell.row)).end("up").row
+            ultima_a = self.ws.range("A" + str(self.ws.cells.last_cell.row)).end("up").row
+            ultima = max(ultima_a, ultima_b, ultima_c)
+        except Exception:
+            ultima = self.MAX_SCAN_LINHAS
+        return max(1, min(ultima, self.MAX_SCAN_LINHAS))
+
     def garantir_total_geral_ultima_linha(self):
         """
         Garante que a linha 'Total Geral' permaneÃ§a como a Ãºltima informaÃ§Ã£o da planilha.
@@ -268,21 +283,91 @@ class FazerPonto:
         raise Exception(f"Data {data_str} nÃ£o encontrada.")
 
     def encontrar_total_data(self, linha_data):
-        i = linha_data + 1
-        while True:
+        limite = linha_data + self.MAX_SCAN_LINHAS
+        for i in range(linha_data + 1, limite + 1):
+            valor_b = self.ws.range(f"B{i}").value
             valor_c = self.ws.range(f"C{i}").value
             valor_a = self.ws.range(f"A{i}").value
+
+            # Se chegou na proxima data, encerra o bloco do dia atual.
+            if valor_b not in (None, ""):
+                if isinstance(valor_b, (datetime, date)):
+                    raise Exception("Total do dia nao encontrado antes da proxima data")
+                if isinstance(valor_b, str) and "/" in valor_b:
+                    raise Exception("Total do dia nao encontrado antes da proxima data")
+
             if isinstance(valor_a, str) and self.normalizar_texto(valor_a) == "totalgeral":
                 raise Exception("âŒ Total do dia nÃ£o encontrado antes do Total Geral")
             if isinstance(valor_c, str) and self.normalizar_texto(valor_c) == "total":
                 return i
-            if i > self.ws.cells.last_cell.row:
-                raise Exception("âŒ Fim da planilha sem encontrar 'Total' do dia")
-            i += 1
+        raise Exception(
+            f"Total do dia nao encontrado em ate {self.MAX_SCAN_LINHAS} linhas a partir da data"
+        )
+
+    def _criar_total_do_dia(self, linha_data):
+        """
+        Cria linha 'Total' para o dia quando ela estiver ausente, sem atravessar para o dia seguinte.
+        """
+        limite = linha_data + self.MAX_SCAN_LINHAS
+        linha_total = None
+
+        for i in range(linha_data + 1, limite + 1):
+            valor_b = self.ws.range(f"B{i}").value
+            valor_a = self.ws.range(f"A{i}").value
+
+            chegou_proxima_data = False
+            if valor_b not in (None, ""):
+                if isinstance(valor_b, (datetime, date)):
+                    chegou_proxima_data = True
+                elif isinstance(valor_b, str) and "/" in valor_b:
+                    chegou_proxima_data = True
+
+            if chegou_proxima_data or (isinstance(valor_a, str) and self.normalizar_texto(valor_a) == "totalgeral"):
+                linha_total = i
+                break
+
+        if linha_total is None:
+            raise Exception(
+                f"Nao foi possivel delimitar o bloco do dia em ate {self.MAX_SCAN_LINHAS} linhas"
+            )
+
+        self.ws.api.Rows(linha_total).Insert()
+        self.ws.range((linha_total, 2)).value = None
+        self.ws.range((linha_total, 3)).value = "Total"
+
+        ultima_col = self.ws.range("A1").expand("right").last_cell.column
+        for col in range(4, ultima_col + 1):
+            s = 0.0
+            for r in range(linha_data, linha_total):
+                v = self._to_float(self.ws.range((r, col)).value)
+                if v is not None:
+                    s += v
+            self.ws.range((linha_total, col)).value = s
+
+        if self.debug:
+            print(f"âœ… Linha Total criada para o dia na linha {linha_total}")
+
+        return linha_total
 
     def encontrar_linha_periodo(self, data, periodo):
         linha_data = self.encontrar_linha_data(data)
-        linha_total_dia = self.encontrar_total_data(linha_data)
+        try:
+            linha_total_dia = self.encontrar_total_data(linha_data)
+        except Exception:
+            # Sem Total do dia, limita busca ate antes da proxima data.
+            linha_total_dia = linha_data + self.MAX_SCAN_LINHAS
+            for i in range(linha_data + 1, linha_data + self.MAX_SCAN_LINHAS + 1):
+                valor_b = self.ws.range(f"B{i}").value
+                valor_a = self.ws.range(f"A{i}").value
+                if isinstance(valor_a, str) and self.normalizar_texto(valor_a) == "totalgeral":
+                    linha_total_dia = i
+                    break
+                if isinstance(valor_b, (datetime, date)):
+                    linha_total_dia = i
+                    break
+                if isinstance(valor_b, str) and "/" in valor_b:
+                    linha_total_dia = i
+                    break
 
         if periodo == "00h":
             linha_acima = linha_data - 1
@@ -405,9 +490,9 @@ class FazerPonto:
                 return None
 
             linha_data = self.encontrar_linha_data(data)
-            i = linha_data + 1
+            limite = linha_data + self.MAX_SCAN_LINHAS
 
-            while True:
+            for i in range(linha_data + 1, limite + 1):
                 valor_a = self.ws.range(f"A{i}").value
                 valor_c = self.ws.range(f"C{i}").value
 
@@ -415,7 +500,6 @@ class FazerPonto:
                     return None
 
                 if not isinstance(valor_c, str):
-                    i += 1
                     continue
 
                 texto = self.normalizar_texto(valor_c)
@@ -425,7 +509,6 @@ class FazerPonto:
 
                 p = self.normalizar_periodo(texto)
                 if not p:
-                    i += 1
                     continue
 
                 if p == periodo:
@@ -440,31 +523,43 @@ class FazerPonto:
                         print(f"âš  Usando equivalente {p} da data {data}")
                     return i, data
 
-                i += 1
+            return None
 
-        # 1ï¸âƒ£ Mesmo dia
+        # Estrategia de busca:
+        # 1) Mesmo dia: apenas periodo exato.
+        # 2) Outros dias: apenas periodo exato.
+        # 3) Mesmo dia: equivalente (00h<->18h, 06h<->12h).
+        # 4) Outros dias: equivalente.
+
+        # 1) Mesmo dia (somente exato)
+        if data_destino in datas_ordenadas:
+            resultado = procurar_em_data(data_destino, aceitar_equivalente=False)
+            if resultado:
+                return resultado
+
+        # 2) Outros dias (somente exato)
+        for offset in range(1, len(datas_ordenadas)):
+            for novo_idx in (idx - offset, idx + offset):
+                if 0 <= novo_idx < len(datas_ordenadas):
+                    data = datas_ordenadas[novo_idx]
+                    resultado = procurar_em_data(data, aceitar_equivalente=False)
+                    if resultado:
+                        return resultado
+
+        # 3) Mesmo dia (equivalente)
         if data_destino in datas_ordenadas:
             resultado = procurar_em_data(data_destino, aceitar_equivalente=True)
             if resultado:
                 return resultado
-        else:
-            # Quando a data ainda nao existe, tenta primeiro o dia mais proximo.
-            resultado = procurar_em_data(datas_ordenadas[idx], aceitar_equivalente=True)
-            if resultado:
-                return resultado
 
-        # 2ï¸âƒ£ Outros dias (duas passagens)
-        # Passagem 1: somente perÃ­odo exato
-        # Passagem 2: permitir equivalente (ex.: 00h <-> 18h)
-        for aceitar_equivalente in (False, True):
-            for offset in range(1, len(datas_ordenadas)):
-                for novo_idx in (idx - offset, idx + offset):
-                    if 0 <= novo_idx < len(datas_ordenadas):
-                        data = datas_ordenadas[novo_idx]
-
-                        resultado = procurar_em_data(data, aceitar_equivalente=aceitar_equivalente)
-                        if resultado:
-                            return resultado
+        # 4) Outros dias (equivalente)
+        for offset in range(1, len(datas_ordenadas)):
+            for novo_idx in (idx - offset, idx + offset):
+                if 0 <= novo_idx < len(datas_ordenadas):
+                    data = datas_ordenadas[novo_idx]
+                    resultado = procurar_em_data(data, aceitar_equivalente=True)
+                    if resultado:
+                        return resultado
 
         if destino_especial:
             raise Exception(
@@ -536,7 +631,8 @@ class FazerPonto:
             v_num = self._to_float(v)
             self.ws.range((linha_insercao + 1, col)).value = v_num if v_num is not None else v
 
-        self.somar_linha_no_total_geral(linha_insercao)
+        self.recalcular_total_do_dia(linha_insercao)
+        self.recalcular_totais_rodape()
         self.garantir_total_geral_ultima_linha()
         self.carregar_datas()
 
@@ -571,7 +667,10 @@ class FazerPonto:
         linha_modelo, data_modelo = self.encontrar_modelo_periodo(data, periodo)
 
         linha_data = self.encontrar_linha_data(data)
-        linha_total_dia = self.encontrar_total_data(linha_data)
+        try:
+            linha_total_dia = self.encontrar_total_data(linha_data)
+        except Exception:
+            linha_total_dia = self._criar_total_do_dia(linha_data)
         linha_insercao = self.encontrar_linha_insercao_periodo(linha_data, linha_total_dia, periodo)
 
         valor_data_linha_data = self.ws.range((linha_data, 2)).value
@@ -597,14 +696,10 @@ class FazerPonto:
             self.ws.range((linha_insercao, 2)).value = valor_data_linha_data
             self.ws.range((linha_insercao + 1, 2)).value = None
 
-        linha_nova = linha_insercao
-        if linha_insercao <= linha_total_dia:
-            linha_total_dia += 1
+        self.recalcular_total_do_dia(linha_data)
+        self.recalcular_totais_rodape()
 
-        self.somar_linha_no_total_do_dia(linha_nova, linha_total_dia)
-        self.somar_linha_no_total_geral(linha_nova)
-
-        print("âž• Linha adicionada e somada ao TOTAL DO DIA e TOTAL GERAL")
+        print("âž• Linha adicionada; TOTAL DO DIA e TOTAL GERAL recalculados")
         retorno = {
             "changed": True,
             "message": f"Periodo {periodo} inserido em {data} com sucesso.",
@@ -634,8 +729,37 @@ class FazerPonto:
         if self.debug:
             print(f"âž• Linha {linha_origem} somada ao TOTAL DO DIA")
 
+    def recalcular_total_do_dia(self, linha_data):
+        """
+        Recalcula somente a linha 'Total' do dia alvo.
+        """
+        try:
+            linha_total_dia = self.encontrar_total_data(linha_data)
+        except Exception:
+            linha_total_dia = self._criar_total_do_dia(linha_data)
+
+        ultima_col = self.ws.range("A1").expand("right").last_cell.column
+        for col in range(4, ultima_col + 1):
+            soma_col = 0.0
+            for i in range(linha_data, linha_total_dia):
+                valor_c = self.ws.range(f"C{i}").value
+                if not isinstance(valor_c, str):
+                    continue
+                periodo = self.normalizar_periodo(valor_c)
+                if not periodo:
+                    continue
+
+                v = self._to_float(self.ws.range((i, col)).value)
+                if v is not None:
+                    soma_col += v
+
+            self.ws.range((linha_total_dia, col)).value = soma_col
+
+        if self.debug:
+            print(f"â†» Total do dia recalculado na linha {linha_total_dia}")
+
     def encontrar_linha_total_geral(self):
-        ultima_linha = self.ws.cells.last_cell.row
+        ultima_linha = self._limite_scan_planilha()
         for i in range(1, ultima_linha + 1):
             valor_a = self.ws.range(f"A{i}").value
             if isinstance(valor_a, str) and self.normalizar_texto(valor_a) == "totalgeral":
@@ -643,7 +767,7 @@ class FazerPonto:
         raise Exception("Total Geral nÃ£o encontrado.")
 
     def encontrar_linha_total_geral_opcional(self):
-        ultima_linha = self.ws.cells.last_cell.row
+        ultima_linha = self._limite_scan_planilha()
         for i in range(1, ultima_linha + 1):
             valor_a = self.ws.range(f"A{i}").value
             if isinstance(valor_a, str) and self.normalizar_texto(valor_a) == "totalgeral":
@@ -669,6 +793,50 @@ class FazerPonto:
             celula_total.value = total_atual + valor_origem
         if self.debug:
             print(f"âž• Linha {linha_origem} somada ao TOTAL GERAL")
+
+    def recalcular_totais_rodape(self):
+        """
+        Recalcula os totais de rodape ("Total Geral" e linha final "Total").
+        Isso evita acumulacao incorreta apos varias insercoes.
+        """
+        ultima_linha = self._limite_scan_planilha()
+        ultima_col = self.ws.range("A1").expand("right").last_cell.column
+
+        # Soma todas as linhas de periodos reais (06h, 12h, 18h, 00h)
+        soma = {col: 0.0 for col in range(4, ultima_col + 1)}
+        for i in range(1, ultima_linha + 1):
+            valor_c = self.ws.range(f"C{i}").value
+            if not isinstance(valor_c, str):
+                continue
+            periodo = self.normalizar_periodo(valor_c)
+            if not periodo:
+                continue
+
+            for col in range(4, ultima_col + 1):
+                v = self._to_float(self.ws.range((i, col)).value)
+                if v is not None:
+                    soma[col] += v
+
+        # Atualiza linhas de rodape finais:
+        # - A == Total Geral
+        # - B == Total (desde que nao seja total do dia em C)
+        for i in range(1, ultima_linha + 1):
+            a = self.ws.range(f"A{i}").value
+            b = self.ws.range(f"B{i}").value
+            c = self.ws.range(f"C{i}").value
+
+            eh_total_geral = isinstance(a, str) and self.normalizar_texto(a) == "totalgeral"
+            eh_total_rodape = (
+                isinstance(b, str)
+                and self.normalizar_texto(b) == "total"
+                and not (isinstance(c, str) and self.normalizar_texto(c) == "total")
+            )
+
+            if not (eh_total_geral or eh_total_rodape):
+                continue
+
+            for col in range(4, ultima_col + 1):
+                self.ws.range((i, col)).value = soma[col]
 
     # ---------------------------
     # Executar
@@ -822,7 +990,8 @@ class FazerPonto:
 
             i = linha_data + 1
             linha_total = None
-            while i <= ws.cells.last_cell.row:
+            limite = linha_data + self.MAX_SCAN_LINHAS
+            while i <= limite:
                 c = ws.range(f"C{i}").value
                 if isinstance(c, str) and self.normalizar_texto(c) == "total":
                     linha_total = i

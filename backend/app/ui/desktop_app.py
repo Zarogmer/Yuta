@@ -591,7 +591,7 @@ class DesktopApp(tk.Tk):
             label_norm = label.upper()
             locked = any(chave in label_norm for chave in self._LOCKED_MENU_KEYWORDS)
 
-            texto = f"{label}  [LOCK]" if locked else label
+            texto = f"{label}  🔒" if locked else label
             if item.get("submenu"):
                 texto = f"   {texto}"
 
@@ -1522,6 +1522,7 @@ class DesktopApp(tk.Tk):
             return
 
         width = max(self._preview_canvas.winfo_width(), 1)
+        height = max(self._preview_canvas.winfo_height(), 1)
         page = self._preview_pages[self._preview_page_index]
         img_width, img_height = page.size
 
@@ -1536,16 +1537,23 @@ class DesktopApp(tk.Tk):
 
         self._preview_image = ImageTk.PhotoImage(resized)
         self._preview_canvas.delete("preview_img")
+        pos_x = max((width - resized.size[0]) // 2, 0)
+        pos_y = max((height - resized.size[1]) // 2, 0)
         self._preview_canvas.create_image(
-            0,
-            0,
+            pos_x,
+            pos_y,
             image=self._preview_image,
             anchor="nw",
             tags="preview_img",
         )
 
         self._preview_canvas.configure(
-            scrollregion=(0, 0, resized.size[0], resized.size[1])
+            scrollregion=(
+                0,
+                0,
+                max(resized.size[0], width),
+                max(resized.size[1], height),
+            )
         )
 
         if self._preview_reset_scroll:
@@ -1633,17 +1641,16 @@ class DesktopApp(tk.Tk):
                 return
 
             self._preview_pages = pages
+            # O preview remove margens externas para visualizacao mais fiel ao conteudo.
+            self._preview_pages = [
+                self._trim_preview_image_whitespace(p) for p in self._preview_pages
+            ]
             self._preview_page_index = 0
             self._preview_pdf_path = path
             self._preview_reset_scroll = True
 
             if eh_fazer_ponto:
                 self._preview_zoom_max = 4.5
-
-                # Remove margens brancas exageradas antes de exibir.
-                self._preview_pages = [
-                    self._trim_preview_image_whitespace(p) for p in self._preview_pages
-                ]
 
                 # Fazer Ponto: une paginas em uma imagem vertical unica.
                 if len(self._preview_pages) > 1:

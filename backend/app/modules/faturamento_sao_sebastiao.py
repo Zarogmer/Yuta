@@ -45,9 +45,25 @@ class FaturamentoSaoSebastiao:
         s = s.replace("-", " ")  # ajuda "sea-side" -> "sea side"
         return re.sub(r"\s+", " ", s).strip().lower()
 
+    def _corrigir_mojibake(self, s: str | None) -> str:
+        if not s:
+            return ""
+        texto = str(s)
+        trocas = {
+            "NÃƒO": "NAO",
+            "NÃ£O": "NAO",
+            "NÃ£o": "Nao",
+            "marÃ§o": "marco",
+            "MarÃ§o": "Marco",
+            "BerÃ§o": "Berco",
+        }
+        for antigo, novo in trocas.items():
+            texto = texto.replace(antigo, novo)
+        return texto
+
     def _br_to_float(self, valor) -> float:
         """Converte '1.721,08' -> 1721.08 ; aceita float/int direto."""
-        if valor in (None, "", "NÃƒO ENCONTRADO"):
+        if valor in (None, "", "NÃƒO ENCONTRADO", "NAO ENCONTRADO", "NÃO ENCONTRADO"):
             return 0.0
         if isinstance(valor, (int, float)):
             return float(valor)
@@ -121,7 +137,26 @@ class FaturamentoSaoSebastiao:
         if not caminhos:
             raise RuntimeError("Nenhum PDF selecionado")
 
-        self.caminhos_pdfs = [Path(c) for c in caminhos]
+        selecionados = [Path(c) for c in caminhos]
+
+        # Se o usuario selecionar ao menos 1 OGMO, inclui automaticamente
+        # os demais PDFs OGMO da mesma pasta.
+        extras = []
+        try:
+            pasta_ref = selecionados[0].parent if selecionados else None
+            if pasta_ref and pasta_ref.exists():
+                for p in pasta_ref.glob("*.pdf"):
+                    nome = self._normalizar(p.name)
+                    if "ogmo" in nome:
+                        extras.append(p)
+        except Exception:
+            extras = []
+
+        unicos = {}
+        for p in selecionados + extras:
+            unicos[str(p.resolve()).lower()] = p
+
+        self.caminhos_pdfs = list(unicos.values())
         print("ðŸ“„ PDFs selecionados:")
         for p in self.caminhos_pdfs:
             print(f"   - {p.name}")
@@ -144,7 +179,10 @@ class FaturamentoSaoSebastiao:
                             self.paginas_texto.append({"pdf": caminho.name, "page": i, "texto": ocr_txt, "src": "OCR"})
 
         if not self.paginas_texto:
-            raise RuntimeError("Nenhuma pÃ¡gina com texto (nem pdfplumber nem OCR).")
+            raise RuntimeError(
+                "Nenhuma pagina com texto (nem pdfplumber nem OCR). "
+                "Verifique se o PDF contem texto selecionavel; se for imagem, instale Poppler e Tesseract no cliente."
+            )
 
 
         self.normalizar_texto_mantendo_linhas()
@@ -299,7 +337,10 @@ class FaturamentoSaoSebastiao:
 
         if not imgs:
             if erros:
-                print(f"âš ï¸ OCR indisponÃ­vel (Poppler/Tesseract): {erros[-1]}")
+                print(
+                    f"OCR indisponivel (Poppler/Tesseract): {erros[-1]} | "
+                    "Instale Poppler e Tesseract ou configure POPPLER_PATH/TESSERACT_EXE."
+                )
             return ""
 
         return pytesseract.image_to_string(imgs[0], lang=lang, config="--oem 3 --psm 6")
@@ -597,7 +638,7 @@ class FaturamentoSaoSebastiao:
 
 
     def _br_or_us_to_float(self, valor) -> float:
-        if valor in (None, "", "NÃƒO ENCONTRADO"):
+        if valor in (None, "", "NÃƒO ENCONTRADO", "NAO ENCONTRADO", "NÃO ENCONTRADO"):
             return 0.0
         if isinstance(valor, (int, float)):
             return float(valor)
@@ -611,6 +652,48 @@ class FaturamentoSaoSebastiao:
         if re.match(r"^\d{1,3}([.\s]\d{3})*,\d{2}$", s):
             s = s.replace(" ", "").replace(".", "").replace(",", ".")
             return float(s)
+
+        def extrair_berco_ou_warehouse(self) -> str | None:
+            """
+            Extrai BERCO/WAREHOUSE do texto dos PDFs OGMO ja carregados.
+            """
+            rotulos = [
+                re.compile(r"\bber[cç]o\b\s*:?\s*(.*)", re.I),
+                re.compile(r"\bwarehouse\b\s*:?\s*(.*)", re.I),
+                re.compile(r"\bberthed\b\s*:?\s*(.*)", re.I),
+            ]
+
+            linhas = []
+            for item in self.paginas_texto:
+                texto = self._corrigir_mojibake(item.get("texto", ""))
+                linhas.extend(texto.splitlines())
+
+            for idx, linha in enumerate(linhas):
+                linha_limpa = self._corrigir_mojibake(linha).strip()
+                if not linha_limpa:
+                    continue
+
+                for rx in rotulos:
+                    m = rx.search(linha_limpa)
+                    if not m:
+                        continue
+
+                    valor = (m.group(1) or "").strip(" :-")
+                    if not valor:
+                        for j in range(idx + 1, min(idx + 4, len(linhas))):
+                            prox = self._corrigir_mojibake(linhas[j]).strip()
+                            if not prox:
+                                continue
+                            if re.search(r"\b(ber[cç]o|warehouse|berthed|sailed|periodo|per[ií]odo)\b", prox, re.I):
+                                continue
+                            valor = prox
+                            break
+
+                    if valor:
+                        valor_norm = self._corrigir_mojibake(valor).strip()
+                        return valor_norm.upper()
+
+            return None
 
         # US com milhar: 1,234.56
         if re.match(r"^\d{1,3}([,\s]\d{3})*\.\d{2}$", s):
@@ -1052,12 +1135,15 @@ class FaturamentoSaoSebastiao:
             aba.range("D16").merge_area.value = fmt(data_ini)
             aba.range("D17").merge_area.value = fmt(data_fim)
 
+            berco = self.extrair_berco_ou_warehouse()
+            aba.range("D18").merge_area.value = berco if berco else "NAO ENCONTRADO"
+
             ano = datetime.now().year % 100
             aba.range("C21").merge_area.value = f"DN {nd}/{ano:02d}"
 
             hoje = datetime.now()
-            meses = ["", "janeiro", "fevereiro", "marÃ§o", "abril", "maio", "junho",
-                    "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"]
+            meses = ["", "janeiro", "fevereiro", "marco", "abril", "maio", "junho",
+                "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"]
             aba.range("C39").merge_area.value = f"  Santos, {hoje.day} de {meses[hoje.month]} de {hoje.year}"
 
             print("âœ… FRONT VIGIA preenchido")

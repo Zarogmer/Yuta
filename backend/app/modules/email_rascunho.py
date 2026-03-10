@@ -10,6 +10,8 @@ from backend.app.config_manager import obter_caminho_assinatura_usuario
 
 DEFAULT_ASSUNTO = "FATURAMENTO SANTOS {dn}/{ano} - M/V {navio}"
 ASSUNTO_SAO_SEBASTIAO = "FATURAMENTO {dn}/{ano2} - M/V {navio} - PORTO DE SÃƒO SEBASTIÃƒO"
+ASSUNTO_CARGONAVE = "ADIANTAMENTO / DADOS - M/V {navio}"
+ASSUNTO_ROCHAMAR = "SOLICITAR OC - M/V {navio}"
 CC_FIXO = ["financeiro@sanportlogistica.com.br"]
 DEFAULT_CORPO = """Prezados, {saudacao}!
 
@@ -135,7 +137,7 @@ CLIENTES_EMAIL = {
     "CARGONAVE": {
         "para": ["fiscal@cgnvsantos.com.br", "contabil@cgnvsantos.com.br", "solange.leandro@cgnvsantos.com.br", "financeiro@cgnvsantos.com.br"],
         "cc": ["sanport@sanportlogistica.com.br"],
-        "assunto": DEFAULT_ASSUNTO,
+        "assunto": ASSUNTO_CARGONAVE,
         "corpo": CORPO_CARGONAVE,
         "corpo_html": CORPO_CARGONAVE_HTML,
     },
@@ -148,7 +150,7 @@ CLIENTES_EMAIL = {
     "ROCHAMAR": {
         "para": ["faturas@rochamar.com", "cpagar@rochamar.com", "oprsts@rochamar.com","solicitaroc@rochamar.com"],
         "cc": ["sanport@sanportlogistica.com.br"],
-        "assunto": DEFAULT_ASSUNTO,
+        "assunto": ASSUNTO_ROCHAMAR,
         "corpo": CORPO_ROCHAMAR,
         "corpo_html": CORPO_ROCHAMAR_HTML,
     },
@@ -379,6 +381,40 @@ def _mesclar_cc(*listas_cc) -> list[str]:
     return resultado
 
 
+def _corrigir_mojibake_texto(texto: str | None) -> str:
+    if texto is None:
+        return ""
+    s = str(texto)
+
+    # Tentativa generica de recuperar texto UTF-8 que foi lido como latin-1.
+    if "Ã" in s or "Â" in s or "â" in s:
+        try:
+            rec = s.encode("latin-1").decode("utf-8")
+            if rec:
+                s = rec
+        except Exception:
+            pass
+
+    trocas = {
+        "NÃ£o": "Não",
+        "nÃ£o": "não",
+        "NÃºmero": "Número",
+        "nÃºmero": "número",
+        "referÃªncia": "referência",
+        "alteraÃ§Ã£o": "alteração",
+        "depÃ³sito": "depósito",
+        "AgÃªncia": "Agência",
+        "emissÃ£o": "emissão",
+        "jÃ¡": "já",
+        "AtracaÃ§Ã£o": "Atracação",
+        "SÃƒO": "SÃO",
+    }
+    for antigo, novo in trocas.items():
+        s = s.replace(antigo, novo)
+
+    return s
+
+
 def criar_rascunho_email_cliente(
     nome_cliente: str,
     anexos=None,
@@ -432,6 +468,10 @@ def criar_rascunho_email_cliente(
     corpo_html_final = (
         corpo_html or config.get("corpo_html") or DEFAULT_CORPO_HTML
     ).format(**contexto)
+
+    assunto_final = _corrigir_mojibake_texto(assunto_final)
+    corpo_final = _corrigir_mojibake_texto(corpo_final)
+    corpo_html_final = _corrigir_mojibake_texto(corpo_html_final)
 
     try:
         pythoncom.CoInitialize()

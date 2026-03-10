@@ -328,20 +328,20 @@ class FaturamentoCompleto:
         except Exception:
             pass
 
-        # Determinar quais abas exportar
-        # FRONT pode ter nome do cliente em vez de "FRONT VIGIA"
-        nome_front = self.ws_front.name if self.ws_front else None
-        abas_exportar = set()
+        # Preview deve refletir o Excel gerado: exporta todas as abas visiveis,
+        # exceto a aba NF.
+        abas_exportar = []
         for ws in self.wb2.sheets:
-            n = ws.name.strip().upper()
-            if n == "REPORT VIGIA":
-                abas_exportar.add(ws.name)
-            elif nome_front and ws.name == nome_front:
-                abas_exportar.add(ws.name)
-            elif n == "FRONT VIGIA":
-                abas_exportar.add(ws.name)
+            nome_norm = ws.name.strip().upper()
+            if nome_norm == "NF":
+                continue
+            try:
+                if bool(ws.api.Visible):
+                    abas_exportar.append(ws.name)
+            except Exception:
+                abas_exportar.append(ws.name)
 
-        print(f"[Preview] Abas para exportar: {abas_exportar}")
+        print(f"[Preview] Abas para exportar (sem NF): {abas_exportar}")
         print(f"[Preview] Todas as abas: {[ws.name for ws in self.wb2.sheets]}")
 
         # Guardar visibilidade original e ocultar abas desnecessarias
@@ -352,7 +352,7 @@ class FaturamentoCompleto:
                 ws.api.Visible = False
 
         try:
-            ajustar_layout_todas_abas_visiveis_no_wb(self.wb2)
+            ajustar_layout_todas_abas_visiveis_no_wb(self.wb2, ignorar_abas=("NF",))
         except Exception:
             pass
 
@@ -489,7 +489,7 @@ class FaturamentoCompleto:
 
     # ===== FRONT ======#
     def extrair_berco(self):
-        """Extrai o valor do campo 'BerÃ§o' do PDF FOLHAS OGMO."""
+        """Extrai o valor do campo 'Berco' do PDF FOLHAS OGMO."""
         if not self.pdf_path or not Path(self.pdf_path).exists():
             print("âš ï¸ PDF FOLHAS OGMO nÃ£o encontrado")
             return None
@@ -498,7 +498,7 @@ class FaturamentoCompleto:
             for page in pdf.pages:
                 words = page.extract_words()
                 for w in words:
-                    if w["text"] == "BerÃ§o":
+                    if w["text"] in ("BerÃ§o", "Berço", "Berco"):
                         x_ref = w["x0"]
                         y_ref = w["top"]
 
@@ -541,7 +541,7 @@ class FaturamentoCompleto:
             if berco:
                 self.ws_front.range("D18").value = berco.upper()
             else:
-                self.ws_front.range("D18").value = "NÃƒO ENCONTRADO"
+                self.ws_front.range("D18").value = "NAO ENCONTRADO"
 
             # -------- DATAS --------
             data_min, data_max = self.obter_datas_extremos(self.ws1)
@@ -553,7 +553,7 @@ class FaturamentoCompleto:
             # -------- RODAPÃ‰ --------
             hoje = datetime.now()
             meses = [
-                "", "janeiro","fevereiro","marÃ§o","abril","maio","junho",
+                "", "janeiro","fevereiro","marco","abril","maio","junho",
                 "julho","agosto","setembro","outubro","novembro","dezembro"
             ]
             self.ws_front.range("C39").value = (
@@ -648,6 +648,13 @@ class FaturamentoCompleto:
         texto = unicodedata.normalize("NFKD", str(cliente or ""))
         texto = "".join(ch for ch in texto if not unicodedata.combining(ch))
         return texto.upper()
+
+    def _is_empresa_cargonave(self, empresa) -> bool:
+        """
+        Aceita variacoes de acento/encoding no texto da celula C9.
+        """
+        cliente_norm = self._normalizar_cliente(str(empresa or "")).replace(" ", "")
+        return "CARGONAVE" in cliente_norm
 
     def _cliente_usa_mmo(self, cliente: str) -> bool:
         cliente_norm = self._normalizar_cliente(cliente).replace(" ", "")
@@ -1160,7 +1167,7 @@ class FaturamentoCompleto:
         if not valor_empresa:
             return
 
-        if str(valor_empresa).strip().upper() != "A/C AGÃŠNCIA MARÃTIMA CARGONAVE LTDA.":
+        if not self._is_empresa_cargonave(valor_empresa):
             return
 
         valor = ws_front_vigia.range("E37").value
@@ -1204,7 +1211,7 @@ class FaturamentoCompleto:
             ws = self.ws_front
 
             empresa = ws.range("C9").value
-            if not empresa or str(empresa).strip().upper() != "A/C AGÃŠNCIA MARÃTIMA CARGONAVE LTDA.":
+            if not self._is_empresa_cargonave(empresa):
                 print("â„¹ï¸ Recibo nÃ£o gerado (empresa nÃ£o Ã© CARGONAVE).")
                 return
 
@@ -1253,7 +1260,7 @@ class FaturamentoCompleto:
 
             hoje = datetime.now()
             meses = [
-                "", "janeiro", "fevereiro", "marÃ§o", "abril", "maio", "junho",
+                "", "janeiro", "fevereiro", "marco", "abril", "maio", "junho",
                 "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"
             ]
 
@@ -1325,7 +1332,7 @@ class FaturamentoCompleto:
             ws = self.ws_front
             empresa = ws.range("C9").value
 
-            if not empresa or str(empresa).strip().upper() != "A/C AGÃŠNCIA MARÃTIMA CARGONAVE LTDA.":
+            if not self._is_empresa_cargonave(empresa):
                 print("â„¹ï¸ Planilha de cÃ¡lculo nÃ£o gerada (empresa nÃ£o Ã© CARGONAVE).")
                 return
 
@@ -1455,7 +1462,7 @@ class FaturamentoCompleto:
 
     def encontrar_pasta_modelo(self, nome_cliente: str) -> Path:
         """
-        Encontra ...\01. FATURAMENTOS\<nome_cliente> usando como base
+        Encontra ...\\01. FATURAMENTOS\\<nome_cliente> usando como base
         as pastas que jÃ¡ funcionam no PC atual.
         """
         bases = []

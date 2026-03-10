@@ -2,7 +2,7 @@
 from tempfile import gettempdir
 
 from backend.app.yuta_helpers import (
-    ajustar_layout_pdf_por_aba,
+    ajustar_layout_todas_abas_visiveis_no_wb,
     abrir_workbooks_de_acordo,
     escrever_de_acordo_nf,
     fechar_workbooks,
@@ -147,7 +147,7 @@ class FaturamentoDeAcordo:
             print("âœ… Faturamento De Acordo concluÃ­do!")
 
             if preview:
-                preview_pdf = self._export_preview_pdf(ws_front, nome_base)
+                preview_pdf = self._export_preview_pdf(wb, nome_base)
                 return {
                     "text": "",
                     "preview_pdf": str(preview_pdf) if preview_pdf else None,
@@ -259,20 +259,38 @@ class FaturamentoDeAcordo:
         ]
         return "\n".join(linhas)
 
-    def _export_preview_pdf(self, ws_front, nome_base):
+    def _export_preview_pdf(self, wb, nome_base):
         caminho_pdf = Path(gettempdir()) / f"preview_{nome_base}.pdf"
         if caminho_pdf.exists():
             caminho_pdf.unlink()
 
-        ajustar_layout_pdf_por_aba(ws_front)
-        ws_front.activate()
-        ws_front.api.ExportAsFixedFormat(
-            Type=0,
-            Filename=str(caminho_pdf),
-            Quality=0,
-            IncludeDocProperties=True,
-            IgnorePrintAreas=False,
-            OpenAfterPublish=False,
-        )
+        vis_orig = {}
+        for sh in wb.sheets:
+            vis_orig[sh.name] = sh.api.Visible
+            if sh.name.strip().upper() == "NF":
+                sh.api.Visible = False
+
+        try:
+            ajustar_layout_todas_abas_visiveis_no_wb(wb, ignorar_abas=("NF",))
+
+            # Excel exige uma aba visivel ativa antes da exportacao.
+            for sh in wb.sheets:
+                if bool(sh.api.Visible):
+                    sh.activate()
+                    break
+
+            wb.api.ExportAsFixedFormat(
+                Type=0,
+                Filename=str(caminho_pdf),
+                Quality=0,
+                IncludeDocProperties=True,
+                IgnorePrintAreas=False,
+                OpenAfterPublish=False,
+            )
+        finally:
+            for sh in wb.sheets:
+                if sh.name in vis_orig:
+                    sh.api.Visible = vis_orig[sh.name]
+
         return caminho_pdf
 
