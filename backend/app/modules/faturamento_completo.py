@@ -1,4 +1,4 @@
-import re
+﻿import re
 import shutil
 import tempfile
 import time
@@ -10,7 +10,7 @@ import comtypes.client
 import pdfplumber
 from num2words import num2words
 
-from yuta_helpers import (
+from backend.app.yuta_helpers import (
     ajustar_layout_todas_abas_visiveis_no_wb,
     ajustar_layout_report_vigia,
     abrir_workbooks,
@@ -45,9 +45,9 @@ class FaturamentoCompleto:
 
 
     def executar(self, preview=False, selection=None):
-        print("🚀 Iniciando execução...")
+        print("ðŸš€ Iniciando execuÃ§Ã£o...")
 
-        # 🔹 1️⃣ Buscar pasta FATURAMENTOS apenas 1x
+        # ðŸ”¹ 1ï¸âƒ£ Buscar pasta FATURAMENTOS apenas 1x
         self.pasta_faturamentos = obter_pasta_faturamentos()
         caminho_navio_rede = None
         if selection and isinstance(selection, dict):
@@ -56,7 +56,7 @@ class FaturamentoCompleto:
         resultado = abrir_workbooks(self.pasta_faturamentos, caminho_navio_rede)
 
         if not resultado:
-            raise SystemExit("❌ Erro ou pasta inválida")
+            raise SystemExit("âŒ Erro ou pasta invÃ¡lida")
 
         (
             self.app,
@@ -70,15 +70,15 @@ class FaturamentoCompleto:
 
         self.pasta_saida_final = pasta_navio_rede
 
-        # 🔹 Extrair DN e nome do navio
+        # ðŸ”¹ Extrair DN e nome do navio
         self.dn, self.nome_navio = extrair_identidade_navio(pasta_navio_rede)
 
         # caminho PDF OGMO
         self.pdf_path = pasta_navio_rede / "FOLHAS OGMO.pdf"
 
-        print(f"📌 DN: {self.dn}")
-        print(f"🚢 NAVIO: {self.nome_navio}")
-        print(f"📑 PDF OGMO: {self.pdf_path}")
+        print(f"ðŸ“Œ DN: {self.dn}")
+        print(f"ðŸš¢ NAVIO: {self.nome_navio}")
+        print(f"ðŸ“‘ PDF OGMO: {self.pdf_path}")
 
         escrever_nf_faturamento_completo(self.wb2, self.nome_navio, self.dn)
 
@@ -103,7 +103,7 @@ class FaturamentoCompleto:
             if caminho_excel.exists():
                 caminho_excel.unlink()
             
-            # ✅ Verifica se é cliente WILLIAMS (apenas FRONT VIGIA no PDF)
+            # âœ… Verifica se Ã© cliente WILLIAMS (apenas FRONT VIGIA no PDF)
             nome_cliente = pasta_navio_rede.parent.name.strip()
             apenas_front = "WILLIAMS" in nome_cliente.upper()
             
@@ -115,7 +115,7 @@ class FaturamentoCompleto:
                 aplicar_layout=True,
             )
 
-            # SALVAR EXCEL (local → rede)
+            # SALVAR EXCEL (local â†’ rede)
             temp_excel = Path(tempfile.gettempdir()) / f"{nome_base}.xlsx"
             if temp_excel.exists():
                 temp_excel.unlink()
@@ -128,7 +128,7 @@ class FaturamentoCompleto:
                 pasta_navio_rede, self.dn, self.nome_navio
             )
 
-            # ✅ Atualizar planilha de controle somente após finalizar faturamento/report
+            # âœ… Atualizar planilha de controle somente apÃ³s finalizar faturamento/report
             self.atualizar_planilha_controle()
 
             nome_cliente = pasta_navio_rede.parent.name.strip()
@@ -141,11 +141,11 @@ class FaturamentoCompleto:
                 caminho_recibo_pdf = self.pasta_saida_final / f"RECIBO - DN {self.dn} - MV {self.nome_navio}.pdf"
                 anexos = [caminho_recibo_pdf] if caminho_recibo_pdf.exists() else []
                 if not anexos:
-                    print("⚠️ Recibo PDF da CARGONAVE não encontrado para anexar no e-mail.")
+                    print("âš ï¸ Recibo PDF da CARGONAVE nÃ£o encontrado para anexar no e-mail.")
             elif nome_cliente_norm == "ROCHAMAR":
                 anexos = [caminho_report] if caminho_report.exists() else []
             else:
-                anexos = [caminho_pdf]  # ✅ Removido Excel dos anexos
+                anexos = [caminho_pdf]  # âœ… Removido Excel dos anexos
                 if caminho_report.exists():
                     anexos.append(caminho_report)
                 if self.pdf_path and Path(self.pdf_path).exists():
@@ -178,17 +178,17 @@ class FaturamentoCompleto:
                     adm=adm,
                     usuario_nome=self.usuario_nome,
                 )
-                print("✅ Rascunho do Outlook criado com anexos.")
+                print("âœ… Rascunho do Outlook criado com anexos.")
             except Exception as e:
-                print(f"⚠️ Nao foi possivel criar rascunho do Outlook: {e}")
+                print(f"âš ï¸ Nao foi possivel criar rascunho do Outlook: {e}")
 
             fechar_workbooks(self.app, self.wb1, self.wb2)
 
-            print(f"💾 Excel salvo em: {caminho_excel}")
-            print(f"📑 PDF FRONT salvo em: {caminho_pdf}")
+            print(f"ðŸ’¾ Excel salvo em: {caminho_excel}")
+            print(f"ðŸ“‘ PDF FRONT salvo em: {caminho_pdf}")
 
         except Exception as e:
-            print(f"❌ ERRO NO FATURAMENTO: {e}")
+            print(f"âŒ ERRO NO FATURAMENTO: {e}")
             fechar_workbooks(self.app, self.wb1, self.wb2)
             raise
 
@@ -375,10 +375,10 @@ class FaturamentoCompleto:
     def processar_preview(self):
         # Front e report, sem gerar arquivos externos
         self.preencher_front_vigia()
-        # ⚠️ NÃO atualiza planilha de controle no preview (evita duplicação)
+        # âš ï¸ NÃƒO atualiza planilha de controle no preview (evita duplicaÃ§Ã£o)
 
         if "REPORT VIGIA" not in [s.name for s in self.wb2.sheets]:
-            raise RuntimeError("Aba 'REPORT VIGIA' não encontrada")
+            raise RuntimeError("Aba 'REPORT VIGIA' nÃ£o encontrada")
 
         ws_report = self.wb2.sheets["REPORT VIGIA"]
 
@@ -422,7 +422,7 @@ class FaturamentoCompleto:
 
         # ---------- REPORT ----------
         if "REPORT VIGIA" not in [s.name for s in self.wb2.sheets]:
-            raise RuntimeError("Aba 'REPORT VIGIA' não encontrada")
+            raise RuntimeError("Aba 'REPORT VIGIA' nÃ£o encontrada")
 
         ws_report = self.wb2.sheets["REPORT VIGIA"]
 
@@ -460,16 +460,16 @@ class FaturamentoCompleto:
 
         valor_arredondado = self.arredondar_para_baixo_50_se_cargonave()
 
-        # 🔹 GERAR RECIBO CARGONAVE (Word + PDF)
+        # ðŸ”¹ GERAR RECIBO CARGONAVE (Word + PDF)
         self.gerar_recibo_cargonave_word()
 
 
-        # 🔹 GERAR PLANILHA DE CÁLCULO
+        # ðŸ”¹ GERAR PLANILHA DE CÃLCULO
         self.gerar_planilha_calculo_cargonave()
 
         self.gerar_planilha_calculo_conesul()
 
-        print("✅ REPORT VIGIA atualizado com sucesso!")
+        print("âœ… REPORT VIGIA atualizado com sucesso!")
 
 
     def escrever_cn_credit_note(self, texto_cn):
@@ -481,7 +481,7 @@ class FaturamentoCompleto:
                     break
 
             if ws_credit is None:
-                print("ℹ️ Aba Credit Note não existe — seguindo fluxo.")
+                print("â„¹ï¸ Aba Credit Note nÃ£o existe â€” seguindo fluxo.")
                 return
 
             ws_credit.range("C21").value = texto_cn
@@ -489,16 +489,16 @@ class FaturamentoCompleto:
 
     # ===== FRONT ======#
     def extrair_berco(self):
-        """Extrai o valor do campo 'Berço' do PDF FOLHAS OGMO."""
+        """Extrai o valor do campo 'BerÃ§o' do PDF FOLHAS OGMO."""
         if not self.pdf_path or not Path(self.pdf_path).exists():
-            print("⚠️ PDF FOLHAS OGMO não encontrado")
+            print("âš ï¸ PDF FOLHAS OGMO nÃ£o encontrado")
             return None
 
         with pdfplumber.open(str(self.pdf_path)) as pdf:
             for page in pdf.pages:
                 words = page.extract_words()
                 for w in words:
-                    if w["text"] == "Berço":
+                    if w["text"] == "BerÃ§o":
                         x_ref = w["x0"]
                         y_ref = w["top"]
 
@@ -536,12 +536,12 @@ class FaturamentoCompleto:
 
             # ======================
 
-            # automatiza a leitura do BERÇO
+            # automatiza a leitura do BERÃ‡O
             berco = self.extrair_berco()
             if berco:
                 self.ws_front.range("D18").value = berco.upper()
             else:
-                self.ws_front.range("D18").value = "NÃO ENCONTRADO"
+                self.ws_front.range("D18").value = "NÃƒO ENCONTRADO"
 
             # -------- DATAS --------
             data_min, data_max = self.obter_datas_extremos(self.ws1)
@@ -550,10 +550,10 @@ class FaturamentoCompleto:
             if data_max:
                 self.ws_front.range("D17").value = self.data_por_extenso(data_max)
 
-            # -------- RODAPÉ --------
+            # -------- RODAPÃ‰ --------
             hoje = datetime.now()
             meses = [
-                "", "janeiro","fevereiro","março","abril","maio","junho",
+                "", "janeiro","fevereiro","marÃ§o","abril","maio","junho",
                 "julho","agosto","setembro","outubro","novembro","dezembro"
             ]
             self.ws_front.range("C39").value = (
@@ -568,22 +568,22 @@ class FaturamentoCompleto:
             if self.usuario_nome and "NORTH STAR" not in nome_cliente:
                 self.ws_front.range("C42").value = f"  {self.usuario_nome}"
 
-            print("✅ FRONT VIGIA preenchido com sucesso!")
+            print("âœ… FRONT VIGIA preenchido com sucesso!")
 
         except Exception as e:
-            print(f"❌ Erro ao preencher FRONT VIGIA: {e}")
+            print(f"âŒ Erro ao preencher FRONT VIGIA: {e}")
             raise
 
     def atualizar_planilha_controle(self):
         """
-        Atualiza a planilha de controle com informações do faturamento VIGIA.
-        Preenche colunas B (data), C (serviço), D (ETA), E (ETB), F (cliente), G (navio), J (DN), K (MMO/COSTS).
+        Atualiza a planilha de controle com informaÃ§Ãµes do faturamento VIGIA.
+        Preenche colunas B (data), C (serviÃ§o), D (ETA), E (ETB), F (cliente), G (navio), J (DN), K (MMO/COSTS).
         """
         try:
             # Obter nome do cliente da pasta
             cliente = self.pasta_saida_final.parent.name.strip()
 
-            # Garante que os cálculos finais do REPORT estejam atualizados
+            # Garante que os cÃ¡lculos finais do REPORT estejam atualizados
             try:
                 self.wb2.app.calculate()
                 self.wb2.app.calculate()
@@ -602,7 +602,7 @@ class FaturamentoCompleto:
             
             # Buscar valores do REPORT VIGIA para preencher K/L no controle:
             # - K: COSTS (despesas)
-            # - L: MMO (somente clientes específicos)
+            # - L: MMO (somente clientes especÃ­ficos)
             usar_mmo = self._cliente_usa_mmo(cliente)
             usar_adiantamento = self._cliente_usa_adiantamento(cliente)
             valores_report = self._buscar_costs_report(return_all=True)
@@ -613,7 +613,7 @@ class FaturamentoCompleto:
             valor_l = valor_mmo if usar_mmo else None
             valor_adiantamento = self.obter_valor_cargonave() if usar_adiantamento else None
             
-            # ✅ Abrir workbook de controle uma única vez
+            # âœ… Abrir workbook de controle uma Ãºnica vez
             criar_pasta = CriarPasta()
             caminho_planilha = criar_pasta._encontrar_planilha()
             wb_controle = openpyxl.load_workbook(caminho_planilha)
@@ -634,15 +634,15 @@ class FaturamentoCompleto:
                     wb_externo=wb_controle
                 )
                 
-                # ✅ Salvar apenas uma vez
+                # âœ… Salvar apenas uma vez
                 criar_pasta.salvar_planilha_com_retry(wb_controle, caminho_planilha)
-                print("✅ Planilha de controle atualizada")
+                print("âœ… Planilha de controle atualizada")
             finally:
                 # Fechar workbook
                 wb_controle.close()
             
         except Exception as e:
-            print(f"⚠️ Erro ao atualizar planilha de controle: {e}")
+            print(f"âš ï¸ Erro ao atualizar planilha de controle: {e}")
 
     def _normalizar_cliente(self, cliente: str) -> str:
         texto = unicodedata.normalize("NFKD", str(cliente or ""))
@@ -660,7 +660,7 @@ class FaturamentoCompleto:
     def _buscar_costs_report(self, prefer_mmo: bool = False, desired_label: str | None = None, return_all: bool = False):
         """
         Busca valores de COSTS/MMO no REPORT VIGIA dinamicamente.
-        O valor fica na mesma linha do rótulo, podendo variar entre colunas F/G/H.
+        O valor fica na mesma linha do rÃ³tulo, podendo variar entre colunas F/G/H.
         Retorna formato brasileiro sem R$: 16.227,85
         """
         try:
@@ -685,7 +685,7 @@ class FaturamentoCompleto:
                     return None
 
             def _valor_da_linha(linha: int, col_rotulo: str):
-                # Tenta primeiro as colunas mais comuns de valor e depois a célula à direita do rótulo
+                # Tenta primeiro as colunas mais comuns de valor e depois a cÃ©lula Ã  direita do rÃ³tulo
                 candidatos = ["F", "G", "H"]
                 if col_rotulo in ["C", "D", "E", "F", "G"]:
                     prox_col = chr(ord(col_rotulo) + 1)
@@ -721,44 +721,44 @@ class FaturamentoCompleto:
 
                             resultado = _valor_da_linha(linha, col_letra)
                             if resultado:
-                                print(f"🔎 REPORT {rotulo}: rótulo em {col_letra}{linha}, valor={resultado}")
+                                print(f"ðŸ”Ž REPORT {rotulo}: rÃ³tulo em {col_letra}{linha}, valor={resultado}")
                                 return resultado
                         except Exception:
                             continue
                 return None
 
-            # 1) Busca direta por rótulo (mais confiável)
+            # 1) Busca direta por rÃ³tulo (mais confiÃ¡vel)
             valores_report["COSTS"] = _capturar_por_rotulo("COSTS")
             valores_report["MMO"] = _capturar_por_rotulo("MMO")
 
-            # 2) Fallback: varredura ampla (mantém compatibilidade)
+            # 2) Fallback: varredura ampla (mantÃ©m compatibilidade)
             for linha in range(1, 301):
                 for col_letra in ['C', 'D', 'E', 'F', 'G', 'H']:
                     try:
                         valor_celula = ws_report.range(f"{col_letra}{linha}").value
                         
-                        # Verifica se contém COSTS ou MMO
+                        # Verifica se contÃ©m COSTS ou MMO
                         if valor_celula and isinstance(valor_celula, str):
                             texto_upper = valor_celula.upper().strip()
                             
                             if "COSTS" in texto_upper or "MMO" in texto_upper:
-                                # Busca o valor na mesma linha do rótulo
+                                # Busca o valor na mesma linha do rÃ³tulo
                                 try:
                                     resultado = _valor_da_linha(linha, col_letra)
                                     if resultado:
                                         if "MMO" in texto_upper and valores_report["MMO"] is None:
                                             valores_report["MMO"] = resultado
-                                            print(f"🔎 REPORT MMO (fallback): linha {linha}, valor={resultado}")
+                                            print(f"ðŸ”Ž REPORT MMO (fallback): linha {linha}, valor={resultado}")
                                         if "COSTS" in texto_upper and valores_report["COSTS"] is None:
                                             valores_report["COSTS"] = resultado
-                                            print(f"🔎 REPORT COSTS (fallback): linha {linha}, valor={resultado}")
+                                            print(f"ðŸ”Ž REPORT COSTS (fallback): linha {linha}, valor={resultado}")
                                 except:
                                     pass
                     except:
                         continue
 
             if not valores_report["COSTS"] and not valores_report["MMO"]:
-                print("⚠️ REPORT VIGIA: não encontrei valores de COSTS/MMO nas linhas 1-300")
+                print("âš ï¸ REPORT VIGIA: nÃ£o encontrei valores de COSTS/MMO nas linhas 1-300")
 
             if return_all:
                 return {
@@ -777,7 +777,7 @@ class FaturamentoCompleto:
             return valores_report["COSTS"] or valores_report["MMO"] or ""
             
         except Exception as e:
-            print(f"❌ Erro ao buscar COSTS: {e}")
+            print(f"âŒ Erro ao buscar COSTS: {e}")
             return ""
 
 
@@ -809,12 +809,12 @@ class FaturamentoCompleto:
 
     def gerar_ciclos_coluna_E(self, ws_resumo, linha_inicial=2):
         """
-        Gera a lista de períodos para a coluna E do REPORT, baseada na data mais antiga.
-        Sequência: 06x12 -> 12x18 -> 18x24 -> 00x06
+        Gera a lista de perÃ­odos para a coluna E do REPORT, baseada na data mais antiga.
+        SequÃªncia: 06x12 -> 12x18 -> 18x24 -> 00x06
         """
         sequencia_padrao = ["06x12", "12x18", "18x24", "00x06"]
 
-        # 1️⃣ Encontrar a primeira data válida (mais antiga que hoje)
+        # 1ï¸âƒ£ Encontrar a primeira data vÃ¡lida (mais antiga que hoje)
         last_row = ws_resumo.used_range.last_cell.row
         valores = ws_resumo.range(f"B{linha_inicial}:B{last_row}").value
         hoje = date.today()
@@ -840,7 +840,7 @@ class FaturamentoCompleto:
         if primeira_linha_data is None:
             return []  # nenhuma data antiga encontrada
 
-        # 2️⃣ Buscar periodos da primeira data (coluna C)
+        # 2ï¸âƒ£ Buscar periodos da primeira data (coluna C)
         data_ref = ws_resumo.range(f"B{primeira_linha_data}").value
         periodos_encontrados = []
 
@@ -868,7 +868,7 @@ class FaturamentoCompleto:
         else:
             primeiro_periodo = None
 
-        # 3️⃣ Se nao for possivel, cai na heuristica de espacamento
+        # 3ï¸âƒ£ Se nao for possivel, cai na heuristica de espacamento
         if not primeiro_periodo:
             contador_vazio = 0
             for i in range(primeira_linha_data + 1, last_row + 1):
@@ -887,11 +887,11 @@ class FaturamentoCompleto:
             else:
                 primeiro_periodo = "00x06"
 
-        # 4️⃣ Sequência cíclica
+        # 4ï¸âƒ£ SequÃªncia cÃ­clica
         idx_inicio = sequencia_padrao.index(primeiro_periodo)
         sequencia_ciclica = sequencia_padrao[idx_inicio:] + sequencia_padrao[:idx_inicio]
 
-        # 5️⃣ Gerar lista completa de períodos
+        # 5ï¸âƒ£ Gerar lista completa de perÃ­odos
         total_periodos = self.obter_periodos(ws_resumo)
         ciclos = [sequencia_ciclica[i % 4] for i in range(total_periodos)]
 
@@ -901,7 +901,7 @@ class FaturamentoCompleto:
 
     def preencher_coluna_E(self, ws_report, linha_inicial=22, debug=False):
         """
-        Preenche a coluna E do REPORT VIGIA com os períodos gerados.
+        Preenche a coluna E do REPORT VIGIA com os perÃ­odos gerados.
         """
         try:
             ciclos = self.gerar_ciclos_coluna_E(self.ws1)
@@ -909,7 +909,7 @@ class FaturamentoCompleto:
                 ws_report.range(f"E{linha_inicial + idx}").value = p
             return ciclos
         except Exception as e:
-            print(f"❌ Erro ao preencher coluna E: {e}")
+            print(f"âŒ Erro ao preencher coluna E: {e}")
             raise
 
 
@@ -957,7 +957,7 @@ class FaturamentoCompleto:
         """
 
         if not periodos:
-            raise ValueError("periodos (lista da coluna E) é obrigatório")
+            raise ValueError("periodos (lista da coluna E) Ã© obrigatÃ³rio")
 
         valores = self.gerar_valores_coluna_G(
             ws_resumo,
@@ -968,7 +968,7 @@ class FaturamentoCompleto:
 
         for i, valor in enumerate(valores):
                 cell = ws_report.range(f"G{linha_inicial + i}")
-                cell.value = valor              # número cru, sem arredondar
+                cell.value = valor              # nÃºmero cru, sem arredondar
                 cell.api.NumberFormatLocal = 'R$ #.##0,00'
 
 
@@ -998,11 +998,11 @@ class FaturamentoCompleto:
                 continue
 
             try:
-                # ✅ CASO 1: já é número no Excel
+                # âœ… CASO 1: jÃ¡ Ã© nÃºmero no Excel
                 if isinstance(z, (int, float)):
                     valor = float(z)
 
-                # ✅ CASO 2: veio como texto "R$ 1.144,70"
+                # âœ… CASO 2: veio como texto "R$ 1.144,70"
                 else:
                     valor = (
                         str(z)
@@ -1025,15 +1025,15 @@ class FaturamentoCompleto:
 
     def extrair_numero_excel(self, z):
         """
-        Garante conversão correta de valores do Excel
+        Garante conversÃ£o correta de valores do Excel
         independente de vir como float ou string pt-BR.
         """
 
-        # 👉 Caso 1: Excel já entregou número
+        # ðŸ‘‰ Caso 1: Excel jÃ¡ entregou nÃºmero
         if isinstance(z, (int, float)):
             return float(z)
 
-        # 👉 Caso 2: Veio como texto (ex: "1.144,70")
+        # ðŸ‘‰ Caso 2: Veio como texto (ex: "1.144,70")
         s = str(z).strip()
 
         if not s:
@@ -1054,10 +1054,10 @@ class FaturamentoCompleto:
 
     def montar_datas_report_vigia(self, ws_report, ws_resumo, linha_inicial=22, periodos=None):
         if periodos is None:
-            raise ValueError("É necessário informar 'periodos' para preencher as datas")
+            raise ValueError("Ã‰ necessÃ¡rio informar 'periodos' para preencher as datas")
         data_inicio, _ = self.obter_datas_extremos(ws_resumo)
         if not data_inicio:
-            raise ValueError("Não foi possível determinar a data inicial na aba RESUMO")
+            raise ValueError("NÃ£o foi possÃ­vel determinar a data inicial na aba RESUMO")
         data_atual = data_inicio
         for i in range(periodos):
             linha = linha_inicial + i
@@ -1100,7 +1100,7 @@ class FaturamentoCompleto:
             OpenAfterPublish=False
         )
 
-        print(f"📑 PDF REPORT VIGIA salvo em: {caminho_pdf}")
+        print(f"ðŸ“‘ PDF REPORT VIGIA salvo em: {caminho_pdf}")
 
 
 
@@ -1120,7 +1120,7 @@ class FaturamentoCompleto:
         except:
             return
 
-        # ---------- LÊ COLUNA G ----------
+        # ---------- LÃŠ COLUNA G ----------
         valores = ws_resumo.range("G1:G1000").value
         valores_validos = [v for v in valores if v not in (None, "")]
 
@@ -1129,14 +1129,14 @@ class FaturamentoCompleto:
 
         ultimo_valor = valores_validos[-1]
 
-        # ---------- CONVERSÃO CORRETA (IGUAL COLUNA G) ----------
+        # ---------- CONVERSÃƒO CORRETA (IGUAL COLUNA G) ----------
         try:
             valor_float = float(ultimo_valor)
         except:
-            print(f"   ⚠️ Valor inválido '{ultimo_valor}'. Usando 0.")
+            print(f"   âš ï¸ Valor invÃ¡lido '{ultimo_valor}'. Usando 0.")
             valor_float = 0.0
 
-        # 🔥 correção de escala (quando vem gigante)
+        # ðŸ”¥ correÃ§Ã£o de escala (quando vem gigante)
         if valor_float > 1_000_000:
             valor_float = valor_float / 100
 
@@ -1145,14 +1145,14 @@ class FaturamentoCompleto:
         celula.value = valor_float
         celula.api.NumberFormatLocal = 'R$ #.##0,00'
 
-        print(f"   ✅ MMO concluído → R$ {valor_float:,.2f}")
+        print(f"   âœ… MMO concluÃ­do â†’ R$ {valor_float:,.2f}")
 
 
 
     def arredondar_para_baixo_50_se_cargonave(self):
         """
-        Arredonda para baixo em múltiplos de 50.
-        Somente para A/C AGÊNCIA MARÍTIMA CARGONAVE LTDA.
+        Arredonda para baixo em mÃºltiplos de 50.
+        Somente para A/C AGÃŠNCIA MARÃTIMA CARGONAVE LTDA.
         Coloca o resultado em H28 do FRONT.
         """
         ws_front_vigia = self.ws_front
@@ -1160,7 +1160,7 @@ class FaturamentoCompleto:
         if not valor_empresa:
             return
 
-        if str(valor_empresa).strip().upper() != "A/C AGÊNCIA MARÍTIMA CARGONAVE LTDA.":
+        if str(valor_empresa).strip().upper() != "A/C AGÃŠNCIA MARÃTIMA CARGONAVE LTDA.":
             return
 
         valor = ws_front_vigia.range("E37").value
@@ -1174,7 +1174,7 @@ class FaturamentoCompleto:
 
         ws_front_vigia.range("H28").value = resultado
 
-        # Para gerar o Word, você pode usar esse mesmo valor:
+        # Para gerar o Word, vocÃª pode usar esse mesmo valor:
         return resultado
 
 
@@ -1192,44 +1192,44 @@ class FaturamentoCompleto:
                     erro_chamado_ocupado = "-2147418111" in msg or "A chamada foi rejeitada pelo chamado" in msg
                     if erro_chamado_ocupado and tentativa < tentativas:
                         pausa = espera_base * tentativa
-                        print(f"⚠️ Word ocupado em '{etapa}'. Nova tentativa em {pausa:.1f}s ({tentativa}/{tentativas})")
+                        print(f"âš ï¸ Word ocupado em '{etapa}'. Nova tentativa em {pausa:.1f}s ({tentativa}/{tentativas})")
                         time.sleep(pausa)
                         continue
                     raise
 
         try:
             # ==========================
-            # 🔒 TRAVA DE SEGURANÇA
+            # ðŸ”’ TRAVA DE SEGURANÃ‡A
             # ==========================
             ws = self.ws_front
 
             empresa = ws.range("C9").value
-            if not empresa or str(empresa).strip().upper() != "A/C AGÊNCIA MARÍTIMA CARGONAVE LTDA.":
-                print("ℹ️ Recibo não gerado (empresa não é CARGONAVE).")
+            if not empresa or str(empresa).strip().upper() != "A/C AGÃŠNCIA MARÃTIMA CARGONAVE LTDA.":
+                print("â„¹ï¸ Recibo nÃ£o gerado (empresa nÃ£o Ã© CARGONAVE).")
                 return
 
             valor_h28 = ws.range("H28").value
             if valor_h28 in (None, "", 0):
-                print("ℹ️ Recibo não gerado (adiantamento não acionado ou valor zero).")
+                print("â„¹ï¸ Recibo nÃ£o gerado (adiantamento nÃ£o acionado ou valor zero).")
                 return
 
             # ==========================
-            # 📄 MODELO WORD
+            # ðŸ“„ MODELO WORD
             # ==========================
             try:
                 modelo_word = obter_modelo_word_cargonave(self.pasta_faturamentos, "CARGONAVE")
             except FileNotFoundError as e:
-                print(f"❌ {e}")
+                print(f"âŒ {e}")
                 return
 
             # ==========================
-            # 📂 COPIAR PARA TEMP
+            # ðŸ“‚ COPIAR PARA TEMP
             # ==========================
             temp_doc = Path(tempfile.gettempdir()) / f"RECIBO - {self.dn}.doc"
             shutil.copy2(modelo_word, temp_doc)
 
             # ==========================
-            # 📝 ABRIR WORD
+            # ðŸ“ ABRIR WORD
             # ==========================
             word = _com_retry(
                 lambda: comtypes.client.CreateObject("Word.Application"),
@@ -1247,13 +1247,13 @@ class FaturamentoCompleto:
             )
 
             # ==========================
-            # 💰 VALOR
+            # ðŸ’° VALOR
             # ==========================
             valor = float(valor_h28)
 
             hoje = datetime.now()
             meses = [
-                "", "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+                "", "janeiro", "fevereiro", "marÃ§o", "abril", "maio", "junho",
                 "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"
             ]
 
@@ -1268,7 +1268,7 @@ class FaturamentoCompleto:
             }
 
             # ==========================
-            # 🔁 SUBSTITUIR (TUDO NEGRITO)
+            # ðŸ” SUBSTITUIR (TUDO NEGRITO)
             # ==========================
             find = doc.Content.Find
 
@@ -1279,7 +1279,7 @@ class FaturamentoCompleto:
                 find.Text = key
                 find.Replacement.Text = str(val)
 
-                # 👉 FORÇA NEGRITO SEM EXCEÇÃO
+                # ðŸ‘‰ FORÃ‡A NEGRITO SEM EXCEÃ‡ÃƒO
                 find.Replacement.Font.Bold = True
 
                 find.Forward = True
@@ -1288,18 +1288,18 @@ class FaturamentoCompleto:
                 find.MatchWholeWord = False
                 find.Execute(Replace=2)
 
-                print(f"🔄 Substituído {key} → {val} (NEGRITO)")
+                print(f"ðŸ”„ SubstituÃ­do {key} â†’ {val} (NEGRITO)")
 
             # ==========================
-            # 💾 SALVAR WORD + PDF
+            # ðŸ’¾ SALVAR WORD + PDF
             # ==========================
             word_saida = self.pasta_saida_final / f"RECIBO - DN {self.dn} - MV {self.nome_navio}.doc"
             _com_retry(lambda: doc.SaveAs(str(word_saida)), "salvar Word")
-            print(f"💾 Word do recibo salvo em: {word_saida}")
+            print(f"ðŸ’¾ Word do recibo salvo em: {word_saida}")
 
             pdf_saida = word_saida.with_suffix(".pdf")
             _com_retry(lambda: doc.SaveAs(str(pdf_saida), FileFormat=17), "salvar PDF")
-            print(f"📑 PDF do recibo salvo em: {pdf_saida}")
+            print(f"ðŸ“‘ PDF do recibo salvo em: {pdf_saida}")
 
             _com_retry(lambda: doc.Close(False), "fechar documento")
             _com_retry(lambda: word.Quit(), "encerrar Word")
@@ -1315,45 +1315,45 @@ class FaturamentoCompleto:
                     word.Quit()
                 except:
                     pass
-            print(f"❌ Erro ao gerar recibo CARGONAVE: {e}")
+            print(f"âŒ Erro ao gerar recibo CARGONAVE: {e}")
 
     def gerar_planilha_calculo_cargonave(self):
         try:
             # ==========================
-            # 🔒 TRAVA DE SEGURANÇA
+            # ðŸ”’ TRAVA DE SEGURANÃ‡A
             # ==========================
             ws = self.ws_front
             empresa = ws.range("C9").value
 
-            if not empresa or str(empresa).strip().upper() != "A/C AGÊNCIA MARÍTIMA CARGONAVE LTDA.":
-                print("ℹ️ Planilha de cálculo não gerada (empresa não é CARGONAVE).")
+            if not empresa or str(empresa).strip().upper() != "A/C AGÃŠNCIA MARÃTIMA CARGONAVE LTDA.":
+                print("â„¹ï¸ Planilha de cÃ¡lculo nÃ£o gerada (empresa nÃ£o Ã© CARGONAVE).")
                 return
 
 
             # ==========================
-            # 🔤 FUNÇÃO AUXILIAR
+            # ðŸ”¤ FUNÃ‡ÃƒO AUXILIAR
             # ==========================
             def remover_acentos(txt: str) -> str:
                 return unicodedata.normalize("NFD", txt).encode("ascii", "ignore").decode("utf-8")
 
             # ==========================
-            # 📂 PASTA DO MODELO (BASE)
+            # ðŸ“‚ PASTA DO MODELO (BASE)
             # ==========================
-            # ✅ PASTA DO MODELO (dinâmica - funciona no cliente)
+            # âœ… PASTA DO MODELO (dinÃ¢mica - funciona no cliente)
             pasta_modelo = self.encontrar_pasta_modelo("CARGONAVE")
 
 
             if not pasta_modelo.exists():
-                raise FileNotFoundError(f"Pasta modelo não encontrada: {pasta_modelo}")
+                raise FileNotFoundError(f"Pasta modelo nÃ£o encontrada: {pasta_modelo}")
 
             # ==========================
-            # 📂 PASTA DO NAVIO (DESTINO)
+            # ðŸ“‚ PASTA DO NAVIO (DESTINO)
             # ==========================
             pasta_navio = self.pasta_saida_final
             pasta_navio.mkdir(parents=True, exist_ok=True)
 
             # ==========================
-            # 🔎 LOCALIZAR MODELO EXCEL
+            # ðŸ”Ž LOCALIZAR MODELO EXCEL
             # ==========================
             modelo = None
 
@@ -1365,32 +1365,32 @@ class FaturamentoCompleto:
 
             if not modelo:
                 raise FileNotFoundError(
-                    f"Nenhum modelo de cálculo encontrado em {pasta_modelo}"
+                    f"Nenhum modelo de cÃ¡lculo encontrado em {pasta_modelo}"
                 )
 
 
             # ==========================
-            # 📄 COPIAR MODELO
+            # ðŸ“„ COPIAR MODELO
             # ==========================
             destino = pasta_navio / "CALCULO - YUTA.xlsx"
             shutil.copy2(modelo, destino)
 
             # ==========================
-            # 📊 ABRIR PLANILHA
+            # ðŸ“Š ABRIR PLANILHA
             # ==========================
             wb = openpyxl.load_workbook(destino)
-            ws = wb.active  # ou wb["Cálculo"] se quiser fixar
+            ws = wb.active  # ou wb["CÃ¡lculo"] se quiser fixar
 
             # ==========================
-            # 📥 PEGAR ÚLTIMA LINHA DO OGMO
+            # ðŸ“¥ PEGAR ÃšLTIMA LINHA DO OGMO
             # ==========================
-            ws1 = self.ws1  # ✔ CONFIRMADO no teu fluxo
+            ws1 = self.ws1  # âœ” CONFIRMADO no teu fluxo
 
             ultima_linha = self.ultima_linha_com_valor(ws1, "G")
 
 
 
-            print(f"📊 Última linha detectada no NAVIO: {ultima_linha}")
+            print(f"ðŸ“Š Ãšltima linha detectada no NAVIO: {ultima_linha}")
 
             mapa = {
                 "C5": "G",
@@ -1409,39 +1409,39 @@ class FaturamentoCompleto:
             for destino_cell, origem_col in mapa.items():
                 valor = ws1[f"{origem_col}{ultima_linha}"].value
                 ws[destino_cell] = valor
-                print(f"   🔹 {origem_col}{ultima_linha} → {destino_cell} | Valor: {valor}")
+                print(f"   ðŸ”¹ {origem_col}{ultima_linha} â†’ {destino_cell} | Valor: {valor}")
 
             # ==========================
-            # ➕ CAMPOS ADICIONAIS
+            # âž• CAMPOS ADICIONAIS
             # ==========================
 
-            # AA (última linha OGMO) → B3
+            # AA (Ãºltima linha OGMO) â†’ B3
             valor_aa = ws1[f"AA{ultima_linha}"].value
             ws["B3"] = valor_aa
-            print(f"   🔹 AA{ultima_linha} → B3 | Valor: {valor_aa}")
+            print(f"   ðŸ”¹ AA{ultima_linha} â†’ B3 | Valor: {valor_aa}")
 
             # ==========================
-            # 🚢 NOME DO NAVIO
+            # ðŸš¢ NOME DO NAVIO
             # ==========================
             nome_navio = self.nome_navio  # ajuste se o atributo tiver outro nome
 
             ws["A4"] = nome_navio
 
-            print(f"   🔹 NAVIO → A2 e A4 | Valor: {nome_navio}")
+            print(f"   ðŸ”¹ NAVIO â†’ A2 e A4 | Valor: {nome_navio}")
 
 
 
 
 
             # ==========================
-            # 💾 SALVAR
+            # ðŸ’¾ SALVAR
             # ==========================
             wb.save(destino)
 
-            print("✅ Planilha CÁLCULO CARGONAVE gerada com sucesso!")
+            print("âœ… Planilha CÃLCULO CARGONAVE gerada com sucesso!")
 
         except Exception as e:
-            print(f"❌ Erro ao gerar planilha CÁLCULO CARGONAVE: {e}")
+            print(f"âŒ Erro ao gerar planilha CÃLCULO CARGONAVE: {e}")
             raise
 
 
@@ -1456,7 +1456,7 @@ class FaturamentoCompleto:
     def encontrar_pasta_modelo(self, nome_cliente: str) -> Path:
         """
         Encontra ...\01. FATURAMENTOS\<nome_cliente> usando como base
-        as pastas que já funcionam no PC atual.
+        as pastas que jÃ¡ funcionam no PC atual.
         """
         bases = []
         if getattr(self, "pasta_saida_final", None):
@@ -1473,7 +1473,7 @@ class FaturamentoCompleto:
                         return pasta
 
         raise FileNotFoundError(
-            f"Não encontrei a pasta de modelos em ...\\01. FATURAMENTOS\\{nome_cliente} "
+            f"NÃ£o encontrei a pasta de modelos em ...\\01. FATURAMENTOS\\{nome_cliente} "
             f"(base testada: {[str(b) for b in bases]})"
         )
 
@@ -1482,39 +1482,39 @@ class FaturamentoCompleto:
     def gerar_planilha_calculo_conesul(self):
         try:
             # ==========================
-            # 🔒 TRAVA DE SEGURANÇA
+            # ðŸ”’ TRAVA DE SEGURANÃ‡A
             # ==========================
             ws = self.ws_front
             empresa = ws.range("C9").value
 
-            if not empresa or str(empresa).strip().upper() != "A/C CONE SUL AGÊNCIA DE NAVEGAÇÃO LTDA.":
-                print("ℹ️ Planilha de cálculo não gerada (empresa não é CONESUL).")
+            if not empresa or str(empresa).strip().upper() != "A/C CONE SUL AGÃŠNCIA DE NAVEGAÃ‡ÃƒO LTDA.":
+                print("â„¹ï¸ Planilha de cÃ¡lculo nÃ£o gerada (empresa nÃ£o Ã© CONESUL).")
                 return
 
 
             # ==========================
-            # 🔤 FUNÇÃO AUXILIAR
+            # ðŸ”¤ FUNÃ‡ÃƒO AUXILIAR
             # ==========================
             def remover_acentos(txt: str) -> str:
                 return unicodedata.normalize("NFD", txt).encode("ascii", "ignore").decode("utf-8")
 
             # ==========================
-            # 📂 PASTA DO MODELO (BASE)
+            # ðŸ“‚ PASTA DO MODELO (BASE)
             # ==========================
             pasta_modelo = self.encontrar_pasta_modelo("CONESUL")
 
 
             if not pasta_modelo.exists():
-                raise FileNotFoundError(f"Pasta modelo não encontrada: {pasta_modelo}")
+                raise FileNotFoundError(f"Pasta modelo nÃ£o encontrada: {pasta_modelo}")
 
             # ==========================
-            # 📂 PASTA DO NAVIO (DESTINO)
+            # ðŸ“‚ PASTA DO NAVIO (DESTINO)
             # ==========================
             pasta_navio = self.pasta_saida_final
             pasta_navio.mkdir(parents=True, exist_ok=True)
 
             # ==========================
-            # 🔎 LOCALIZAR MODELO EXCEL
+            # ðŸ”Ž LOCALIZAR MODELO EXCEL
             # ==========================
             modelo = None
 
@@ -1526,32 +1526,32 @@ class FaturamentoCompleto:
 
             if not modelo:
                 raise FileNotFoundError(
-                    f"Nenhum modelo de cálculo encontrado em {pasta_modelo}"
+                    f"Nenhum modelo de cÃ¡lculo encontrado em {pasta_modelo}"
                 )
 
 
             # ==========================
-            # 📄 COPIAR MODELO
+            # ðŸ“„ COPIAR MODELO
             # ==========================
             destino = pasta_navio / "CALCULO - YUTA.xlsx"
             shutil.copy2(modelo, destino)
 
             # ==========================
-            # 📊 ABRIR PLANILHA
+            # ðŸ“Š ABRIR PLANILHA
             # ==========================
             wb = openpyxl.load_workbook(destino)
-            ws = wb.active  # ou wb["Cálculo"] se quiser fixar
+            ws = wb.active  # ou wb["CÃ¡lculo"] se quiser fixar
 
             # ==========================
-            # 📥 PEGAR ÚLTIMA LINHA DO OGMO
+            # ðŸ“¥ PEGAR ÃšLTIMA LINHA DO OGMO
             # ==========================
-            ws1 = self.ws1  # ✔ CONFIRMADO no teu fluxo
+            ws1 = self.ws1  # âœ” CONFIRMADO no teu fluxo
 
             ultima_linha = self.ultima_linha_com_valor(ws1, "G")
 
 
 
-            print(f"📊 Última linha detectada no NAVIO: {ultima_linha}")
+            print(f"ðŸ“Š Ãšltima linha detectada no NAVIO: {ultima_linha}")
 
             mapa = {
                 "C5": "G",
@@ -1570,39 +1570,39 @@ class FaturamentoCompleto:
             for destino_cell, origem_col in mapa.items():
                 valor = ws1[f"{origem_col}{ultima_linha}"].value
                 ws[destino_cell] = valor
-                print(f"   🔹 {origem_col}{ultima_linha} → {destino_cell} | Valor: {valor}")
+                print(f"   ðŸ”¹ {origem_col}{ultima_linha} â†’ {destino_cell} | Valor: {valor}")
 
             # ==========================
-            # ➕ CAMPOS ADICIONAIS
+            # âž• CAMPOS ADICIONAIS
             # ==========================
 
-            # AA (última linha OGMO) → B3
+            # AA (Ãºltima linha OGMO) â†’ B3
             valor_aa = ws1[f"AA{ultima_linha}"].value
             ws["B3"] = valor_aa
-            print(f"   🔹 AA{ultima_linha} → B3 | Valor: {valor_aa}")
+            print(f"   ðŸ”¹ AA{ultima_linha} â†’ B3 | Valor: {valor_aa}")
 
             # ==========================
-            # 🚢 NOME DO NAVIO
+            # ðŸš¢ NOME DO NAVIO
             # ==========================
             nome_navio = self.nome_navio  # ajuste se o atributo tiver outro nome
 
             ws["A4"] = nome_navio
 
-            print(f"   🔹 NAVIO → A2 e A4 | Valor: {nome_navio}")
+            print(f"   ðŸ”¹ NAVIO â†’ A2 e A4 | Valor: {nome_navio}")
 
 
 
 
 
             # ==========================
-            # 💾 SALVAR
+            # ðŸ’¾ SALVAR
             # ==========================
             wb.save(destino)
 
-            print("✅ Planilha CÁLCULO CONESUL gerada com sucesso!")
+            print("âœ… Planilha CÃLCULO CONESUL gerada com sucesso!")
 
         except Exception as e:
-            print(f"❌ Erro ao gerar planilha CÁLCULO CONESUL: {e}")
+            print(f"âŒ Erro ao gerar planilha CÃLCULO CONESUL: {e}")
             raise
 
 
@@ -1611,7 +1611,7 @@ class FaturamentoCompleto:
     def obter_valor_cargonave(self):
         """
         Retorna o valor do adiantamento CARGONAVE
-        (lido direto do FRONT – célula H28)
+        (lido direto do FRONT â€“ cÃ©lula H28)
         """
         valor = self.ws_front.range("H28").value
         try:
@@ -1668,20 +1668,20 @@ class FaturamentoCompleto:
 
     def obter_periodos(self, ws_resumo):
         """
-        Retorna o último valor válido da coluna AA como inteiro.
+        Retorna o Ãºltimo valor vÃ¡lido da coluna AA como inteiro.
         """
         last_row = ws_resumo.used_range.last_cell.row
-        # Lê toda a coluna AA
+        # LÃª toda a coluna AA
         valores = ws_resumo.range(f"AA1:AA{last_row}").value
 
         if not valores:
-            return 1  # padrão
+            return 1  # padrÃ£o
 
         # Garante que 'valores' seja uma lista
         if not isinstance(valores, list):
             valores = [valores]
 
-        # Procura o último valor não vazio
+        # Procura o Ãºltimo valor nÃ£o vazio
         for v in reversed(valores):
             if v is not None and v != "":
                 try:
@@ -1690,3 +1690,4 @@ class FaturamentoCompleto:
                     continue
 
         return 1
+

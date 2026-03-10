@@ -1,23 +1,25 @@
-from pathlib import Path
+﻿from pathlib import Path
 import re
 import os
 import time
 import unicodedata
 from datetime import datetime
 
-from yuta_helpers import obter_pasta_faturamentos, openpyxl
-from config_manager import obter_caminho_base_faturamentos
+from backend.app.yuta_helpers import obter_pasta_faturamentos, openpyxl
+from backend.app.config_manager import obter_caminho_base_faturamentos
 
 
 class CriarPasta:
-    # Cache de clientes para otimização (evita múltiplas varreduras na rede)
+    # Cache de clientes para otimizaÃ§Ã£o (evita mÃºltiplas varreduras na rede)
     _cache_clientes = None
     _cache_timestamp = None
     _cache_ttl = 300  # 5 minutos
     
-    # Cache para próximo DN
+    # Cache para prÃ³ximo DN
     _cache_proximo_dn = None
     _cache_dn_timestamp = None
+    _cache_clientes_modelos = None
+    _cache_modelos_timestamp = None
     
     def __init__(self, planilha_nome="CONTROLE DE FATURAMENTO"):
         self.planilha_nome = planilha_nome
@@ -36,53 +38,53 @@ class CriarPasta:
 
     def _deve_usar_fallback_desktop(self, bases_rede: list[Path]) -> bool:
         """
-        Decide se pode usar Desktop/Área de Trabalho para localizar planilha.
+        Decide se pode usar Desktop/Ãrea de Trabalho para localizar planilha.
 
         Regras:
         - Se YUTA_ALLOW_DESKTOP_FALLBACK=1/true/yes/on: permite sempre
-        - Caso contrário, só permite quando nenhuma base de rede está acessível
+        - Caso contrÃ¡rio, sÃ³ permite quando nenhuma base de rede estÃ¡ acessÃ­vel
         """
         flag = os.getenv("YUTA_ALLOW_DESKTOP_FALLBACK", "").strip().lower()
         if flag in {"1", "true", "yes", "on"}:
             return True
 
-        # Por padrão, NÃO usa fallback para Desktop.
-        # Isso evita atualizar uma cópia local da planilha de controle,
-        # causando divergência com o arquivo compartilhado (Exibir online).
+        # Por padrÃ£o, NÃƒO usa fallback para Desktop.
+        # Isso evita atualizar uma cÃ³pia local da planilha de controle,
+        # causando divergÃªncia com o arquivo compartilhado (Exibir online).
         return False
 
     def _possiveis_bases_clientes(self):
         """
-        Retorna lista de possíveis bases. Agora usa o sistema de configuração.
+        Retorna lista de possÃ­veis bases. Agora usa o sistema de configuraÃ§Ã£o.
         """
         try:
             # Tenta usar o caminho configurado/auto-detectado
             caminho_config = obter_caminho_base_faturamentos()
             return [caminho_config]
         except FileNotFoundError:
-            # Fallback para detecção manual
+            # Fallback para detecÃ§Ã£o manual
             home = Path.home()
             return [
-                home / "SANPORT LOGÍSTICA PORTUÁRIA LTDA" / "Central de Documentos - 01. FATURAMENTOS",
-                home / "SANPORT LOGÍSTICA PORTUÁRIA LTDA" / "Central de Documentos - Documentos" / "01. FATURAMENTOS",
+                home / "SANPORT LOGÃSTICA PORTUÃRIA LTDA" / "Central de Documentos - 01. FATURAMENTOS",
+                home / "SANPORT LOGÃSTICA PORTUÃRIA LTDA" / "Central de Documentos - Documentos" / "01. FATURAMENTOS",
                 home
-                / "OneDrive - SANPORT LOGÍSTICA PORTUÁRIA LTDA"
+                / "OneDrive - SANPORT LOGÃSTICA PORTUÃRIA LTDA"
                 / "Central de Documentos - 01. FATURAMENTOS",
                 home
-                / "OneDrive - SANPORT LOGÍSTICA PORTUÁRIA LTDA"
+                / "OneDrive - SANPORT LOGÃSTICA PORTUÃRIA LTDA"
                 / "Central de Documentos - Documentos"
                 / "01. FATURAMENTOS",
             ]
 
     def _obter_base_clientes(self) -> Path:
         """
-        Obtém a pasta base onde ficam as pastas dos clientes.
-        Usa o sistema de configuração centralizado.
+        ObtÃ©m a pasta base onde ficam as pastas dos clientes.
+        Usa o sistema de configuraÃ§Ã£o centralizado.
         """
         try:
             return obter_caminho_base_faturamentos()
         except FileNotFoundError:
-            # Fallback: tenta os métodos antigos
+            # Fallback: tenta os mÃ©todos antigos
             for base in self._possiveis_bases_clientes():
                 if base.exists():
                     return base
@@ -129,13 +131,13 @@ class CriarPasta:
 
             caminhos_ordenados = sorted(caminhos, key=_score)
             escolhido = caminhos_ordenados[0]
-            print(f"📌 Planilha de controle selecionada: {escolhido}")
+            print(f"ðŸ“Œ Planilha de controle selecionada: {escolhido}")
             return escolhido
 
         ano_atual_4d = str(datetime.now().year)
         ano_atual_2d = self._ano_atual_2d()
 
-        # 1) Prioriza nomes explícitos do ano atual (ex.: "CONTROLE DE FATURAMENTO 2026")
+        # 1) Prioriza nomes explÃ­citos do ano atual (ex.: "CONTROLE DE FATURAMENTO 2026")
         encontrados_prioritarios = []
         for base in bases:
             if not base.exists() or not base.is_dir():
@@ -158,7 +160,7 @@ class CriarPasta:
         if escolhido:
             return escolhido
 
-        # 2) Fallback para nome padrão sem sufixo
+        # 2) Fallback para nome padrÃ£o sem sufixo
         encontrados_padrao = []
         for base in bases:
             if not base.exists() or not base.is_dir():
@@ -200,7 +202,7 @@ class CriarPasta:
         if candidatos:
             candidatos.sort(key=lambda item: (item[0], item[1], item[2], item[3]))
             escolhido = candidatos[0][4]
-            print(f"📌 Planilha de controle selecionada: {escolhido}")
+            print(f"ðŸ“Œ Planilha de controle selecionada: {escolhido}")
             return escolhido
 
         locais = "\n".join(f"- {b}" for b in bases)
@@ -212,7 +214,7 @@ class CriarPasta:
 
     def _ultima_linha_com_dados(self, ws, colunas):
         """
-        Busca a última linha com dados. Para evitar gaps, prioriza a coluna J (DN).
+        Busca a Ãºltima linha com dados. Para evitar gaps, prioriza a coluna J (DN).
         """
         ultima = 0
         
@@ -253,20 +255,20 @@ class CriarPasta:
 
     def listar_clientes(self, forcar_refresh=False):
         """
-        Lista clientes disponíveis com cache para otimizar acesso à rede.
+        Lista clientes disponÃ­veis com cache para otimizar acesso Ã  rede.
         
         Args:
             forcar_refresh: Se True, ignora cache e busca novamente
         """
         import time
         
-        # Verifica se tem cache válido
+        # Verifica se tem cache vÃ¡lido
         if not forcar_refresh and self._cache_clientes is not None and self._cache_timestamp is not None:
             tempo_decorrido = time.time() - self._cache_timestamp
             if tempo_decorrido < self._cache_ttl:
                 return self._cache_clientes
         
-        # Cache expirado ou refresh forçado: busca novamente
+        # Cache expirado ou refresh forÃ§ado: busca novamente
         base = self._obter_base_clientes()
         clientes = []
         
@@ -278,7 +280,7 @@ class CriarPasta:
                     continue
                 clientes.append(item.name)
         except Exception as e:
-            # Se falhar (rede indisponível, etc), retorna cache antigo se existir
+            # Se falhar (rede indisponÃ­vel, etc), retorna cache antigo se existir
             if self._cache_clientes is not None:
                 return self._cache_clientes
             raise
@@ -290,10 +292,50 @@ class CriarPasta:
         CriarPasta._cache_timestamp = time.time()
         
         return resultado
+
+    def listar_clientes_modelos(self, forcar_refresh=False):
+        """
+        Lista clientes com base nos arquivos de modelo da pasta FATURAMENTOS.
+        Mais rapido que varrer todas as pastas de cliente da rede.
+        """
+        import time
+
+        if (
+            not forcar_refresh
+            and self._cache_clientes_modelos is not None
+            and self._cache_modelos_timestamp is not None
+            and (time.time() - self._cache_modelos_timestamp) < self._cache_ttl
+        ):
+            return self._cache_clientes_modelos
+
+        pasta_modelos = obter_pasta_faturamentos()
+        clientes = []
+        extensoes = {".xlsx", ".xlsm", ".xls"}
+
+        for item in pasta_modelos.iterdir():
+            if not item.is_file():
+                continue
+            if item.suffix.lower() not in extensoes:
+                continue
+
+            nome = item.stem.strip()
+            if not nome:
+                continue
+
+            nome_norm = self._normalizar_pasta_nome(nome)
+            if "CONTROLEDEFATURAMENTO" in nome_norm:
+                continue
+
+            clientes.append(nome)
+
+        resultado = sorted(dict.fromkeys(clientes), key=lambda v: v.casefold())
+        CriarPasta._cache_clientes_modelos = resultado
+        CriarPasta._cache_modelos_timestamp = time.time()
+        return resultado
     
     def obter_proximo_dn(self, forcar_refresh=False) -> str:
         """
-        Obtém o próximo DN da sequência (último DN + 1)
+        ObtÃ©m o prÃ³ximo DN da sequÃªncia (Ãºltimo DN + 1)
         Com cache para evitar abrir planilha toda vez.
         
         Args:
@@ -301,7 +343,7 @@ class CriarPasta:
         """
         import time
         
-        # Verifica cache válido
+        # Verifica cache vÃ¡lido
         if not forcar_refresh and self._cache_proximo_dn is not None and self._cache_dn_timestamp is not None:
             tempo_decorrido = time.time() - self._cache_dn_timestamp
             if tempo_decorrido < self._cache_ttl:
@@ -312,11 +354,11 @@ class CriarPasta:
             wb = openpyxl.load_workbook(caminho_planilha, data_only=True)
             ws = wb.active
             
-            # Encontra a última linha com dados na coluna J
+            # Encontra a Ãºltima linha com dados na coluna J
             ultima_linha = self._ultima_linha_com_dados(ws, ["J"])
             ano_atual = self._ano_atual_2d()
             
-            if ultima_linha < 2:  # Se não há dados, começa do 1
+            if ultima_linha < 2:  # Se nÃ£o hÃ¡ dados, comeÃ§a do 1
                 resultado = f"001/{ano_atual}"
             else:
                 ultimo_numero = 0
@@ -349,7 +391,7 @@ class CriarPasta:
             proximo = ultimo_numero + 1 if ultimo_numero > 0 else 1
             return f"{str(proximo).zfill(3)}/{self._ano_atual_2d()}"
         except Exception as e:
-            print(f"⚠️ Erro ao obter próximo DN: {e}")
+            print(f"âš ï¸ Erro ao obter prÃ³ximo DN: {e}")
             # Se falhar mas tem cache, usa cache antigo
             if self._cache_proximo_dn is not None:
                 return self._cache_proximo_dn
@@ -462,8 +504,8 @@ class CriarPasta:
 
     def _obter_maior_numero_dn_por_pastas(self) -> int:
         """
-        Fallback para quando a planilha de controle não puder ser lida.
-        Busca o maior número no início das pastas de navio.
+        Fallback para quando a planilha de controle nÃ£o puder ser lida.
+        Busca o maior nÃºmero no inÃ­cio das pastas de navio.
         Ex: "241 - EAGLE ARROW" -> 241.
         """
         try:
@@ -499,6 +541,30 @@ class CriarPasta:
 
         return maior
 
+    def _buscar_cliente_navio_por_dn(self, dn: str) -> tuple[str | None, str | None]:
+        """
+        Busca cliente/navio na planilha de controle a partir da DN informada.
+        """
+        dn_padronizado = self._padronizar_dn(dn)
+        caminho_planilha = self._encontrar_planilha()
+        wb = openpyxl.load_workbook(caminho_planilha, data_only=True)
+        ws = wb.active
+
+        try:
+            ultima_linha = self._ultima_linha_com_dados(ws, ["F", "G", "J"])
+            for row in range(1, ultima_linha + 1):
+                valor_dn = self._normalizar_texto(ws[f"J{row}"].value)
+                if valor_dn == dn_padronizado:
+                    cliente = self._normalizar_texto(ws[f"F{row}"].value)
+                    navio = self._normalizar_texto(ws[f"G{row}"].value)
+                    return cliente or None, navio or None
+            return None, None
+        finally:
+            try:
+                wb.close()
+            except Exception:
+                pass
+
     def salvar_planilha_com_retry(self, wb, caminho_planilha: Path, tentativas: int = 5, espera_inicial: float = 0.8):
         """
         Salva workbook com retry para ambiente de rede (arquivo em uso por outro PC).
@@ -517,39 +583,39 @@ class CriarPasta:
             if tentativa < tentativas:
                 espera = espera_inicial * (2 ** (tentativa - 1))
                 print(
-                    f"⚠️ Planilha de controle em uso ou indisponível na rede "
+                    f"âš ï¸ Planilha de controle em uso ou indisponÃ­vel na rede "
                     f"(tentativa {tentativa}/{tentativas}). Nova tentativa em {espera:.1f}s..."
                 )
                 time.sleep(espera)
 
         raise RuntimeError(
-            f"Não foi possível salvar a planilha de controle após {tentativas} tentativas: {caminho_planilha}\n"
+            f"NÃ£o foi possÃ­vel salvar a planilha de controle apÃ³s {tentativas} tentativas: {caminho_planilha}\n"
             f"Erro final: {erro_final}"
         )
 
     def _gravar_planilha(self, cliente: str, navio: str, dn: str, servico: str = None, data: str = None, eta: str = None, etb: str = None, mmo: str = None, mmo_extra: str = None, adiantamento: str = None, wb_externo=None, iss: str = None, limpar_formulas_adm_cliente: bool = False, iss_formula: bool = False):
         """
-        Grava informações na planilha de controle.
+        Grava informaÃ§Ãµes na planilha de controle.
         
         Args:
             cliente: Nome do cliente (coluna F)
             navio: Nome do navio (coluna G)
             dn: DN (coluna J)
-            servico: Tipo de serviço - "VIGIA" ou "DE ACORDO" (coluna C)
+            servico: Tipo de serviÃ§o - "VIGIA" ou "DE ACORDO" (coluna C)
             data: Data do dia (coluna B)
             eta: Data inicial - D16 da FRONT VIGIA (coluna D)
             etb: Data final - D17 da FRONT VIGIA (coluna E)
             mmo: Valor principal para coluna K (DESPESAS/COSTS)
-            mmo_extra: Valor MMO para coluna L (quando aplicável)
+            mmo_extra: Valor MMO para coluna L (quando aplicÃ¡vel)
             adiantamento: Valor de adiantamento para coluna H (CARGONAVE)
-            wb_externo: Workbook openpyxl já aberto (opcional, evita reabrir)
+            wb_externo: Workbook openpyxl jÃ¡ aberto (opcional, evita reabrir)
             iss: Valor do ISS (coluna O)
-            limpar_formulas_adm_cliente: Se True, limpa fórmulas das colunas N (ADM %) e P (CLIENTE %)
-            iss_formula: Se True, cria fórmula =K{linha}*5% na coluna O ao invés de valor fixo
+            limpar_formulas_adm_cliente: Se True, limpa fÃ³rmulas das colunas N (ADM %) e P (CLIENTE %)
+            iss_formula: Se True, cria fÃ³rmula =K{linha}*5% na coluna O ao invÃ©s de valor fixo
         """
         caminho_planilha = self._encontrar_planilha()
         
-        # ✅ Reutiliza workbook se fornecido
+        # âœ… Reutiliza workbook se fornecido
         if wb_externo is not None:
             wb = wb_externo
             deve_fechar = False
@@ -572,16 +638,16 @@ class CriarPasta:
                 linha = row
                 break
         
-        # Se não encontrou, cria nova linha
+        # Se nÃ£o encontrou, cria nova linha
         if linha is None:
             linha = ultima_linha + 1
-            print(f"📝 Criando nova linha {linha} na planilha de controle")
-            # Apenas na CRIAÇÃO, preenche cliente/navio/DN
+            print(f"ðŸ“ Criando nova linha {linha} na planilha de controle")
+            # Apenas na CRIAÃ‡ÃƒO, preenche cliente/navio/DN
             ws[f"F{linha}"].value = cliente
             ws[f"G{linha}"].value = navio
             ws[f"J{linha}"].value = dn_padronizado
             
-            # Preenche coluna M (NF sequencial - próximo número disponível)
+            # Preenche coluna M (NF sequencial - prÃ³ximo nÃºmero disponÃ­vel)
             ultimo_nf = None
             for row in range(ultima_linha, 0, -1):
                 valor_m = ws[f"M{row}"].value
@@ -592,13 +658,13 @@ class CriarPasta:
                     except:
                         continue
             
-            # Se encontrou um número, incrementa; senão começa do 7986
+            # Se encontrou um nÃºmero, incrementa; senÃ£o comeÃ§a do 7986
             proximo_nf = (ultimo_nf + 1) if ultimo_nf else 7986
             ws[f"M{linha}"].value = proximo_nf
         else:
-            print(f"📝 Atualizando linha {linha} existente (DN: {dn_padronizado})")
+            print(f"ðŸ“ Atualizando linha {linha} existente (DN: {dn_padronizado})")
 
-        # Atualiza APENAS os campos fornecidos (não sobrescreve vazios)
+        # Atualiza APENAS os campos fornecidos (nÃ£o sobrescreve vazios)
         def _to_float_moeda(valor):
             if valor in (None, ""):
                 return None
@@ -623,7 +689,7 @@ class CriarPasta:
         if data:
             ws[f"B{linha}"].value = data
             
-            # Preenche coluna A com mês abreviado (JAN, FEV, MAR...)
+            # Preenche coluna A com mÃªs abreviado (JAN, FEV, MAR...)
             try:
                 from datetime import datetime
                 # Tenta converter a data string para datetime
@@ -659,27 +725,27 @@ class CriarPasta:
                 valor_numero = _to_float_moeda(adiantamento)
                 celula_adiantamento.value = valor_numero
                 celula_adiantamento.number_format = '"R$ "#,##0.00'
-                print(f"✓ Adiantamento gravado na coluna H, linha {linha}: {valor_numero}")
+                print(f"âœ“ Adiantamento gravado na coluna H, linha {linha}: {valor_numero}")
             except Exception as e:
                 celula_adiantamento.value = str(adiantamento)
-                print(f"⚠️ Adiantamento gravado como texto: {adiantamento} (erro: {e})")
+                print(f"âš ï¸ Adiantamento gravado como texto: {adiantamento} (erro: {e})")
 
         if mmo is not None:
-            # MMO: converter para número e formatar como moeda
+            # MMO: converter para nÃºmero e formatar como moeda
             celula_mmo = ws[f"K{linha}"]
             try:
                 valor_numero = _to_float_moeda(mmo)
                 
-                # Grava como NÚMERO (não texto)
+                # Grava como NÃšMERO (nÃ£o texto)
                 celula_mmo.value = valor_numero
                 
                 # Formato de moeda brasileiro com R$
                 celula_mmo.number_format = '"R$ "#,##0.00'
-                print(f"✓ MMO gravado na coluna K, linha {linha}: {valor_numero}")
+                print(f"âœ“ MMO gravado na coluna K, linha {linha}: {valor_numero}")
             except Exception as e:
                 # Se falhar, grava como texto mesmo
                 celula_mmo.value = str(mmo)
-                print(f"⚠️ MMO gravado como texto: {mmo} (erro: {e})")
+                print(f"âš ï¸ MMO gravado como texto: {mmo} (erro: {e})")
 
         if mmo_extra is not None:
             celula_mmo_extra = ws[f"L{linha}"]
@@ -687,18 +753,18 @@ class CriarPasta:
                 valor_numero = _to_float_moeda(mmo_extra)
                 celula_mmo_extra.value = valor_numero
                 celula_mmo_extra.number_format = '"R$ "#,##0.00'
-                print(f"✓ MMO extra gravado na coluna L, linha {linha}: {valor_numero}")
+                print(f"âœ“ MMO extra gravado na coluna L, linha {linha}: {valor_numero}")
             except Exception as e:
                 celula_mmo_extra.value = str(mmo_extra)
-                print(f"⚠️ MMO extra gravado como texto: {mmo_extra} (erro: {e})")
+                print(f"âš ï¸ MMO extra gravado como texto: {mmo_extra} (erro: {e})")
         
         if iss:
-            # ISS: converter para número e formatar como moeda (coluna O)
+            # ISS: converter para nÃºmero e formatar como moeda (coluna O)
             celula_iss = ws[f"O{linha}"]
             try:
                 valor_numero = _to_float_moeda(iss)
                 
-                # Grava como NÚMERO (não texto)
+                # Grava como NÃšMERO (nÃ£o texto)
                 celula_iss.value = valor_numero
                 
                 # Formato de moeda brasileiro com R$
@@ -707,19 +773,19 @@ class CriarPasta:
                 # Se falhar, grava como texto mesmo
                 celula_iss.value = str(iss)
         elif iss_formula:
-            # Cria fórmula =K{linha}*5% na coluna O (para DE ACORDO)
+            # Cria fÃ³rmula =K{linha}*5% na coluna O (para DE ACORDO)
             celula_iss = ws[f"O{linha}"]
             celula_iss.value = f"=K{linha}*5%"
             celula_iss.number_format = '"R$ "#,##0.00'
-            print(f"✓ Fórmula ISS criada na coluna O, linha {linha}: =K{linha}*5%")
+            print(f"âœ“ FÃ³rmula ISS criada na coluna O, linha {linha}: =K{linha}*5%")
         
-        # Limpar fórmulas das colunas N (ADM %) e P (CLIENTE %) para DE ACORDO
+        # Limpar fÃ³rmulas das colunas N (ADM %) e P (CLIENTE %) para DE ACORDO
         if limpar_formulas_adm_cliente:
             ws[f"N{linha}"].value = None  # Limpa ADM %
             ws[f"P{linha}"].value = None  # Limpa CLIENTE %
-            print(f"✓ Colunas N e P limpas (linha {linha})")
+            print(f"âœ“ Colunas N e P limpas (linha {linha})")
 
-        # ✅ Só salva se abriu internamente (workbook externo é responsabilidade de quem passou)
+        # âœ… SÃ³ salva se abriu internamente (workbook externo Ã© responsabilidade de quem passou)
         if deve_fechar:
             self.salvar_planilha_com_retry(wb, caminho_planilha)
 
@@ -742,15 +808,15 @@ class CriarPasta:
                 log_callback(msg + "\n", tag=tag)
             else:
                 print(msg)
-        
+
         if cliente and navio and dn:
-            log(f"📋 Cliente: {cliente}")
-            log(f"🚢 Navio: {navio}")
-            log(f"📝 DN: {dn}")
+            log(f"ðŸ“‹ Cliente: {cliente}")
+            log(f"ðŸš¢ Navio: {navio}")
+            log(f"ðŸ“ DN: {dn}")
             
             numero = self._formatar_numero(dn)
         else:
-            log(f"📋 Lendo dados da planilha...")
+            log(f"ðŸ“‹ Lendo dados da planilha...")
             caminho_planilha = self._encontrar_planilha()
             wb = openpyxl.load_workbook(caminho_planilha, data_only=True)
             ws = wb.active
@@ -765,32 +831,32 @@ class CriarPasta:
                 f"Dados incompletos: cliente={cliente}, navio={navio}, numero={numero}"
             )
 
-        log(f"🔍 Localizando pasta do cliente '{cliente}'...")
+        log(f"ðŸ” Localizando pasta do cliente '{cliente}'...")
         pasta_base = self._obter_base_clientes()
-        log(f"📂 Base: {pasta_base}")
+        log(f"ðŸ“‚ Base: {pasta_base}")
         
         pasta_cliente = self._resolver_pasta_cliente(pasta_base, cliente)
 
         if not pasta_cliente:
             raise FileNotFoundError(
-                f"Pasta do cliente não encontrada!\n"
+                f"Pasta do cliente nÃ£o encontrada!\n"
                 f"Base: {pasta_base}\n"
                 f"Cliente: '{cliente}'"
             )
 
-        log(f"📁 Pasta do cliente: {pasta_cliente.name}")
+        log(f"ðŸ“ Pasta do cliente: {pasta_cliente.name}")
 
         nome_pasta = f"{numero} - {navio}"
         destino = pasta_cliente / nome_pasta
-        log(f"📝 Criando: {nome_pasta}")
+        log(f"ðŸ“ Criando: {nome_pasta}")
         
         destino.mkdir(parents=True, exist_ok=True)
         
         if not destino.exists():
             raise RuntimeError(f"Falha ao criar pasta: {destino}")
 
-        log(f"✅ Pasta criada com sucesso!", tag="ok")
-        log(f"   📍 {destino}")
+        log(f"âœ… Pasta criada com sucesso!", tag="ok")
+        log(f"   ðŸ“ {destino}")
         
         if return_info:
             return {
@@ -799,3 +865,4 @@ class CriarPasta:
                 "base": pasta_base,
             }
         return destino
+

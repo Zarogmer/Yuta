@@ -1,4 +1,4 @@
-from yuta_helpers import *
+﻿from backend.app.yuta_helpers import *
 import calendar
 from .email_rascunho import criar_rascunho_email_cliente
 from .criar_pasta import CriarPasta
@@ -6,22 +6,22 @@ from .criar_pasta import CriarPasta
 
 class FaturamentoSaoSebastiao:
     """
-    ✅ Objetivo (organizado e estável):
+    âœ… Objetivo (organizado e estÃ¡vel):
     - Selecionar 1 ou MAIS PDFs (Sea Side geralmente vem com 2)
     - Ler TODOS os PDFs selecionados e manter quebras de linha
     - Identificar cliente/porto pela pasta do CLIENTE
     - Se for layout SS (Wilson SS / Sea Side PSS):
         - extrair valores somando entre PDFs (se tiver 2)
-        - colar no REPORT VIGIA com o MAPA_FIXO (você já deixou as células)
+        - colar no REPORT VIGIA com o MAPA_FIXO (vocÃª jÃ¡ deixou as cÃ©lulas)
         - preencher FRONT VIGIA
         - preencher CREDIT NOTE se existir
-    - Se for cliente padrão (Aquarius e outros):
-        - usar report padrão (datas e horários)
-        - (extração financeira pode ser diferente: por enquanto fica como TODO)
+    - Se for cliente padrÃ£o (Aquarius e outros):
+        - usar report padrÃ£o (datas e horÃ¡rios)
+        - (extraÃ§Ã£o financeira pode ser diferente: por enquanto fica como TODO)
 
-    ⚠️ IMPORTANTE:
-    - Eu NÃO removo '\n' na normalização, porque sua extração depende de splitlines().
-    - A extração do layout SS soma automaticamente tudo que casar (ótimo pra Sea Side com 2 PDFs).
+    âš ï¸ IMPORTANTE:
+    - Eu NÃƒO removo '\n' na normalizaÃ§Ã£o, porque sua extraÃ§Ã£o depende de splitlines().
+    - A extraÃ§Ã£o do layout SS soma automaticamente tudo que casar (Ã³timo pra Sea Side com 2 PDFs).
     """
 
     # ==================================================
@@ -35,7 +35,7 @@ class FaturamentoSaoSebastiao:
         self.usuario_nome = (usuario_nome or "").strip()
 
     # ==================================================
-    # UTIL: NORMALIZAÇÃO
+    # UTIL: NORMALIZAÃ‡ÃƒO
     # ==================================================
     def _normalizar(self, s: str | None) -> str:
         if not s:
@@ -47,13 +47,13 @@ class FaturamentoSaoSebastiao:
 
     def _br_to_float(self, valor) -> float:
         """Converte '1.721,08' -> 1721.08 ; aceita float/int direto."""
-        if valor in (None, "", "NÃO ENCONTRADO"):
+        if valor in (None, "", "NÃƒO ENCONTRADO"):
             return 0.0
         if isinstance(valor, (int, float)):
             return float(valor)
         return float(str(valor).replace(".", "").replace(",", ".").strip())
 
-    # Alias (você usava _to_float em alguns lugares)
+    # Alias (vocÃª usava _to_float em alguns lugares)
     def _to_float(self, valor) -> float:
         return self._br_to_float(valor)
 
@@ -66,10 +66,10 @@ class FaturamentoSaoSebastiao:
             for n in nomes_possiveis:
                 if nome == n.strip().lower():
                     return sheet
-        raise RuntimeError(f"Aba não encontrada. Esperado uma de: {nomes_possiveis}")
+        raise RuntimeError(f"Aba nÃ£o encontrada. Esperado uma de: {nomes_possiveis}")
 
     # ==================================================
-    # IDENTIFICAÇÃO CLIENTE / PORTO
+    # IDENTIFICAÃ‡ÃƒO CLIENTE / PORTO
     # ==================================================
     def identificar_cliente_e_porto(self) -> tuple[str, str]:
         """
@@ -83,19 +83,19 @@ class FaturamentoSaoSebastiao:
 
         nome_norm = self._normalizar(pasta_cliente.name)
 
-        # WILSON SONS — SÃO SEBASTIÃO
+        # WILSON SONS â€” SÃƒO SEBASTIÃƒO
         if "wilson" in nome_norm and "sebastiao" in nome_norm:
             return "WILSON SONS", "SAO SEBASTIAO"
 
-        # SEA SIDE — PSS (mesmo layout de colagem do report)
+        # SEA SIDE â€” PSS (mesmo layout de colagem do report)
         if "sea side" in nome_norm and "pss" in nome_norm:
             return "SEA SIDE", "PSS"
 
-        # AQUARIUS — PSS
+        # AQUARIUS â€” PSS
         if "aquarius" in nome_norm and "pss" in nome_norm:
             return "AQUARIUS", "PSS"
 
-        # PADRÃO
+        # PADRÃƒO
         return pasta_cliente.name.strip().upper(), "PADRAO"
 
     def _usa_layout_ss(self, cliente: str, porto: str) -> bool:
@@ -105,7 +105,7 @@ class FaturamentoSaoSebastiao:
         )
 
     # ==================================================
-    # PDF: SELEÇÃO E LEITURA (MULTI)
+    # PDF: SELEÃ‡ÃƒO E LEITURA (MULTI)
     # ==================================================
     def selecionar_pdfs_ogmo(self):
         root = Tk()
@@ -122,7 +122,7 @@ class FaturamentoSaoSebastiao:
             raise RuntimeError("Nenhum PDF selecionado")
 
         self.caminhos_pdfs = [Path(c) for c in caminhos]
-        print("📄 PDFs selecionados:")
+        print("ðŸ“„ PDFs selecionados:")
         for p in self.caminhos_pdfs:
             print(f"   - {p.name}")
 
@@ -144,7 +144,7 @@ class FaturamentoSaoSebastiao:
                             self.paginas_texto.append({"pdf": caminho.name, "page": i, "texto": ocr_txt, "src": "OCR"})
 
         if not self.paginas_texto:
-            raise RuntimeError("Nenhuma página com texto (nem pdfplumber nem OCR).")
+            raise RuntimeError("Nenhuma pÃ¡gina com texto (nem pdfplumber nem OCR).")
 
 
         self.normalizar_texto_mantendo_linhas()
@@ -157,10 +157,10 @@ class FaturamentoSaoSebastiao:
             return 0.0
         s = str(s).strip()
 
-        # remove espaços (OCR adora meter)
+        # remove espaÃ§os (OCR adora meter)
         s = s.replace(" ", "")
 
-        # se tem vírgula e ponto, decide o decimal pelo ÚLTIMO separador
+        # se tem vÃ­rgula e ponto, decide o decimal pelo ÃšLTIMO separador
         if "," in s and "." in s:
             if s.rfind(",") > s.rfind("."):
                 # 1.234,56  -> decimal = ,
@@ -170,11 +170,11 @@ class FaturamentoSaoSebastiao:
                 s = s.replace(",", "")
             return float(s)
 
-        # só vírgula: 1234,56
+        # sÃ³ vÃ­rgula: 1234,56
         if "," in s:
             return float(s.replace(".", "").replace(",", "."))
 
-        # só ponto: 1234.56
+        # sÃ³ ponto: 1234.56
         return float(s)
 
     def _poppler_paths_candidatos(self) -> list[Path]:
@@ -299,7 +299,7 @@ class FaturamentoSaoSebastiao:
 
         if not imgs:
             if erros:
-                print(f"⚠️ OCR indisponível (Poppler/Tesseract): {erros[-1]}")
+                print(f"âš ï¸ OCR indisponÃ­vel (Poppler/Tesseract): {erros[-1]}")
             return ""
 
         return pytesseract.image_to_string(imgs[0], lang=lang, config="--oem 3 --psm 6")
@@ -308,8 +308,8 @@ class FaturamentoSaoSebastiao:
 
     def normalizar_texto_mantendo_linhas(self):
         """
-        Normaliza espaços mas NÃO remove '\n'.
-        Isso mantém sua extração por linha estável.
+        Normaliza espaÃ§os mas NÃƒO remove '\n'.
+        Isso mantÃ©m sua extraÃ§Ã£o por linha estÃ¡vel.
         """
         blocos = []
         for item in self.paginas_texto:
@@ -323,13 +323,13 @@ class FaturamentoSaoSebastiao:
 
 
     # ==================================================
-    # PDF ORDER (OGMO 1..N)  -> agora retorna Path (não só nome)
+    # PDF ORDER (OGMO 1..N)  -> agora retorna Path (nÃ£o sÃ³ nome)
     # ==================================================
     def _ordenar_pdfs_ogmo(self) -> list[Path]:
         """
-        Retorna a lista de Paths ordenada pelo número do arquivo:
+        Retorna a lista de Paths ordenada pelo nÃºmero do arquivo:
         FOLHAS OGMO 1.pdf, 2.pdf, 3.pdf ...
-        Se não achar número, joga pro final mantendo ordem original.
+        Se nÃ£o achar nÃºmero, joga pro final mantendo ordem original.
         """
         def idx(p: Path) -> int:
             nome = p.name
@@ -346,12 +346,12 @@ class FaturamentoSaoSebastiao:
 
 
     def _pdfs_ordenados_nomes(self) -> list[str]:
-        """Nomes ordenados (string) - útil se você quiser logar."""
+        """Nomes ordenados (string) - Ãºtil se vocÃª quiser logar."""
         return [p.name for p in self._ordenar_pdfs_ogmo()]
 
 
     # ==================================================
-    # EXTRAÇÃO - DATA (tolerante a OCR) por PDF (case-insensitive)
+    # EXTRAÃ‡ÃƒO - DATA (tolerante a OCR) por PDF (case-insensitive)
     # ==================================================
     def extrair_periodo_por_data(self, pdf_alvo: str | None = None) -> tuple[str, str]:
         if pdf_alvo:
@@ -363,10 +363,10 @@ class FaturamentoSaoSebastiao:
             texto_busca = self.texto_pdf or ""
 
         if not texto_busca.strip():
-            raise RuntimeError("Período não encontrado no PDF (texto vazio).")
+            raise RuntimeError("PerÃ­odo nÃ£o encontrado no PDF (texto vazio).")
 
-        # tolerância OCR
-        rx_per = re.compile(r"per(?:[íi]|l|1|f|0)?odo", re.I)
+        # tolerÃ¢ncia OCR
+        rx_per = re.compile(r"per(?:[Ã­i]|l|1|f|0)?odo", re.I)
         rx_ini = re.compile(r"inic(?:ial|iaI|ia1|lal)?", re.I)
         rx_fim = re.compile(r"fina(?:l|I|1)?", re.I)
         rx_data = re.compile(r"\b(\d{1,2}/\d{1,2}/\d{4})\b")
@@ -381,7 +381,7 @@ class FaturamentoSaoSebastiao:
                     m = rx_data.search(ln_norm)
                     if m:
                         return m.group(1)
-                    # tenta nas próximas 2 linhas (OCR às vezes joga a data abaixo)
+                    # tenta nas prÃ³ximas 2 linhas (OCR Ã s vezes joga a data abaixo)
                     for j in range(i+1, min(i+3, len(linhas))):
                         m2 = rx_data.search(linhas[j])
                         if m2:
@@ -392,13 +392,13 @@ class FaturamentoSaoSebastiao:
         data_fim = achar_data(rx_fim)
 
         if not data_ini or not data_fim:
-            raise RuntimeError(f"Período (datas) não encontrado. ini={data_ini} fim={data_fim}")
+            raise RuntimeError(f"PerÃ­odo (datas) nÃ£o encontrado. ini={data_ini} fim={data_fim}")
 
         return data_ini, data_fim
 
 
     # ==================================================
-    # EXTRAÇÃO - HORÁRIO (tolerante a OCR) por PDF (case-insensitive)
+    # EXTRAÃ‡ÃƒO - HORÃRIO (tolerante a OCR) por PDF (case-insensitive)
     # ==================================================
     def extrair_periodo_por_horario(self, pdf_alvo: str | None = None) -> tuple[str, str]:
         if pdf_alvo:
@@ -410,14 +410,14 @@ class FaturamentoSaoSebastiao:
             texto_busca = self.texto_pdf or ""
 
         if not texto_busca.strip():
-            raise RuntimeError("Horários não encontrados (texto vazio).")
+            raise RuntimeError("HorÃ¡rios nÃ£o encontrados (texto vazio).")
 
-        rx_per = re.compile(r"per(?:[íi]|l|1|f|0)?odo", re.I)
+        rx_per = re.compile(r"per(?:[Ã­i]|l|1|f|0)?odo", re.I)
         rx_ini = re.compile(r"inic(?:ial|iaI|ia1|lal)?", re.I)
         rx_fim = re.compile(r"fina(?:l|I|1)?", re.I)
 
-        # aceita 07x13, 07×13, 07-13, 07h13
-        rx_h = re.compile(r"\b(\d{1,2})\s*[x×h\-]\s*(\d{1,2})\b", re.I)
+        # aceita 07x13, 07Ã—13, 07-13, 07h13
+        rx_h = re.compile(r"\b(\d{1,2})\s*[xÃ—h\-]\s*(\d{1,2})\b", re.I)
 
         linhas = texto_busca.splitlines()
 
@@ -439,7 +439,7 @@ class FaturamentoSaoSebastiao:
         p_fim = achar_horario(rx_fim)
 
         if not p_ini or not p_fim:
-            raise RuntimeError(f"Período (horários) não encontrado. ini={p_ini} fim={p_fim}")
+            raise RuntimeError(f"PerÃ­odo (horÃ¡rios) nÃ£o encontrado. ini={p_ini} fim={p_fim}")
 
         p_ini_raw = self._normalizar_horario_texto(p_ini)
         p_fim_raw = self._normalizar_horario_texto(p_fim)
@@ -448,15 +448,15 @@ class FaturamentoSaoSebastiao:
         p_fim_norm = self._bucket_horario_periodo(p_fim_raw)
 
         if not p_ini_norm or not p_fim_norm:
-            raise RuntimeError(f"Horários inválidos: ini={p_ini} fim={p_fim}")
+            raise RuntimeError(f"HorÃ¡rios invÃ¡lidos: ini={p_ini} fim={p_fim}")
 
         if p_ini_raw != p_ini_norm or p_fim_raw != p_fim_norm:
             print(
-                f"⚠️ Horário atípico detectado "
+                f"âš ï¸ HorÃ¡rio atÃ­pico detectado "
                 f"({p_ini_raw} -> bucket {p_ini_norm}, {p_fim_raw} -> bucket {p_fim_norm})."
             )
 
-        # Retorna horário REAL do OGMO; o bucket é usado só para cálculo interno
+        # Retorna horÃ¡rio REAL do OGMO; o bucket Ã© usado sÃ³ para cÃ¡lculo interno
         return p_ini_raw, p_fim_raw
 
     def _normalizar_horario_texto(self, periodo: str | None) -> str | None:
@@ -464,7 +464,7 @@ class FaturamentoSaoSebastiao:
             return None
 
         s = str(periodo).strip().lower().replace(" ", "")
-        s = s.replace("h", "x").replace("×", "x").replace("-", "x").replace(":", "x")
+        s = s.replace("h", "x").replace("Ã—", "x").replace("-", "x").replace(":", "x")
 
         m = re.match(r"^(\d{1,2})x(\d{1,2})$", s)
         if not m:
@@ -476,7 +476,7 @@ class FaturamentoSaoSebastiao:
 
     def _bucket_horario_periodo(self, periodo: str | None) -> str | None:
         """
-        Converte horários para bucket padrão do report:
+        Converte horÃ¡rios para bucket padrÃ£o do report:
         07x13, 13x19, 19x01, 01x07.
         Ex.: 09x13 -> 07x13.
         """
@@ -510,7 +510,7 @@ class FaturamentoSaoSebastiao:
         return float((24 - inicio) + fim)
 
     # ==================================================
-    # PERÍODO MESCLADO N PDFs (primeiro que tem INI, último que tem FIM)
+    # PERÃODO MESCLADO N PDFs (primeiro que tem INI, Ãºltimo que tem FIM)
     # ==================================================
 
 
@@ -520,28 +520,28 @@ class FaturamentoSaoSebastiao:
         if not pdfs:
             raise RuntimeError("Nenhum PDF selecionado.")
 
-        # ✅ início = menor OGMO (normalmente 1)
+        # âœ… inÃ­cio = menor OGMO (normalmente 1)
         p_ini = self._achar_pdf_menor_numero() or pdfs[0]
 
-        # ✅ fim = maior OGMO (último: 2, 3, 4...)
+        # âœ… fim = maior OGMO (Ãºltimo: 2, 3, 4...)
         p_fim = self._achar_pdf_maior_numero() or pdfs[-1]
 
         try:
             di, _ = self.extrair_periodo_por_data(p_ini.name)
         except Exception as e:
             raise RuntimeError(
-                f"Não consegui extrair a DATA INICIAL do OGMO {self._numero_ogmo(p_ini.name)} ({p_ini.name}). Erro: {e}"
+                f"NÃ£o consegui extrair a DATA INICIAL do OGMO {self._numero_ogmo(p_ini.name)} ({p_ini.name}). Erro: {e}"
             ) from e
 
         try:
             _, df = self.extrair_periodo_por_data(p_fim.name)
         except Exception as e:
             raise RuntimeError(
-                f"Não consegui extrair a DATA FINAL do OGMO {self._numero_ogmo(p_fim.name)} ({p_fim.name}). Erro: {e}"
+                f"NÃ£o consegui extrair a DATA FINAL do OGMO {self._numero_ogmo(p_fim.name)} ({p_fim.name}). Erro: {e}"
             ) from e
 
-        print(f"✔ Data inicial de: {p_ini.name} -> {di}")
-        print(f"✔ Data final de:   {p_fim.name} -> {df}")
+        print(f"âœ” Data inicial de: {p_ini.name} -> {di}")
+        print(f"âœ” Data final de:   {p_fim.name} -> {df}")
 
         return di, df
 
@@ -550,12 +550,12 @@ class FaturamentoSaoSebastiao:
 
 
     # ==================================================
-    # EXTRAÇÃO: LAYOUT SS (WILSON SS / SEA SIDE PSS)
+    # EXTRAÃ‡ÃƒO: LAYOUT SS (WILSON SS / SEA SIDE PSS)
     # ==================================================
     def _somar_valor_item(self, regex_nome: str, paginas_validas: set[int] | None = None, pick: str = "last") -> float:
         total = 0.0
 
-        # ✅ BR ou US "limpo", e evita pegar pedaços quando tem "1.229.35"
+        # âœ… BR ou US "limpo", e evita pegar pedaÃ§os quando tem "1.229.35"
         padrao_valor = r"\d{1,3}(?:\.\d{3})*,\d{2}|\b\d+\.\d{2}\b(?!\.)"
 
         for item in self.paginas_texto:
@@ -590,21 +590,21 @@ class FaturamentoSaoSebastiao:
             for linha in it["texto"].splitlines():
                 if re.search(regex_nome, linha, re.IGNORECASE):
                     vals = re.findall(padrao_valor, linha)
-                    print(f"[{it['pdf']} pág {it['page']}] {linha}")
+                    print(f"[{it['pdf']} pÃ¡g {it['page']}] {linha}")
                     print(f"   -> valores: {vals}")
         print("=== FIM DEBUG ===\n")
 
 
 
     def _br_or_us_to_float(self, valor) -> float:
-        if valor in (None, "", "NÃO ENCONTRADO"):
+        if valor in (None, "", "NÃƒO ENCONTRADO"):
             return 0.0
         if isinstance(valor, (int, float)):
             return float(valor)
 
         s = str(valor).strip()
 
-        # remove espaços dentro do número: "742 266.46" -> "742266.46"
+        # remove espaÃ§os dentro do nÃºmero: "742 266.46" -> "742266.46"
         s = re.sub(r"(?<=\d)\s+(?=\d)", "", s)
 
         # pt-BR: 1.234,56
@@ -625,7 +625,7 @@ class FaturamentoSaoSebastiao:
         if re.match(r"^\d+\.\d{2}$", s):
             return float(s)
 
-        # fallback: tenta limpar tudo menos dígito , .
+        # fallback: tenta limpar tudo menos dÃ­gito , .
         s2 = re.sub(r"[^0-9.,]", "", s)
         if "," in s2 and "." in s2:
             # assume pt-BR (.) milhar e (, ) decimal
@@ -639,7 +639,7 @@ class FaturamentoSaoSebastiao:
     def _somar_rat_ajustado(self, paginas_validas: set[int] | None = None, lookahead: int = 6) -> float:
         """
         Pega o VALOR do INSS (RAT Ajustado) ignorando percentual (1,5000%)
-        e sem cair no INSS (Terceiros/Previdência).
+        e sem cair no INSS (Terceiros/PrevidÃªncia).
         Aceita BR (53,24) e US (53.24).
         """
         total = 0.0
@@ -660,7 +660,7 @@ class FaturamentoSaoSebastiao:
                     for j in range(i + 1, min(len(linhas), i + 1 + lookahead)):
                         ln = linhas[j]
 
-                        # para no próximo INSS que não seja RAT (pra não cair no Terceiros)
+                        # para no prÃ³ximo INSS que nÃ£o seja RAT (pra nÃ£o cair no Terceiros)
                         if re.search(r"INSS\s*\(", ln, re.IGNORECASE) and not re.search(r"INSS\s*\(\s*RAT", ln, re.IGNORECASE):
                             break
 
@@ -687,7 +687,7 @@ class FaturamentoSaoSebastiao:
 
 
     def _valor_apos_rs(self, linha: str) -> float | None:
-        # pega números logo depois de "R$"
+        # pega nÃºmeros logo depois de "R$"
         m = re.search(r"R\$\s*([0-9][0-9\.\,\s]*[0-9][\.,][0-9]{2})", linha, re.IGNORECASE)
         if not m:
             return None
@@ -705,8 +705,8 @@ class FaturamentoSaoSebastiao:
                 continue
 
             for linha in item["texto"].splitlines():
-                if re.search(r"Seguran[cç]a\s+do\s+Trabalhador\s+Portu[aá]rio\s+Avulso", linha, re.IGNORECASE):
-                    # ✅ pega só valores monetários e usa o ÚLTIMO (que é o valor)
+                if re.search(r"Seguran[cÃ§]a\s+do\s+Trabalhador\s+Portu[aÃ¡]rio\s+Avulso", linha, re.IGNORECASE):
+                    # âœ… pega sÃ³ valores monetÃ¡rios e usa o ÃšLTIMO (que Ã© o valor)
                     vals = re.findall(padrao_valor, linha)
                     if vals:
                         total += self._br_or_us_to_float(vals[-1])
@@ -724,7 +724,7 @@ class FaturamentoSaoSebastiao:
         # US: 1,229.35 ou 1229.35 ou 1 229.35
         us = re.findall(r"\d{1,3}(?:[,\s]\d{3})*\.\d{2}", ln)
 
-        # junta e pega o último valor monetário real da linha
+        # junta e pega o Ãºltimo valor monetÃ¡rio real da linha
         vals = br + us
         if not vals:
             return None
@@ -746,7 +746,7 @@ class FaturamentoSaoSebastiao:
         total = 0.0
         for ln in texto.splitlines():
             if re.search(rotulo_regex, self._normalizar(ln), re.IGNORECASE):
-                v = self._valor_apos_rs(ln)  # ✅ sempre após R$
+                v = self._valor_apos_rs(ln)  # âœ… sempre apÃ³s R$
                 if v is not None:
                     total += v
         return total
@@ -754,21 +754,21 @@ class FaturamentoSaoSebastiao:
 
 
     def extrair_dados_layout_sea_side_wilson(self):
-        print("🔍 Extraindo dados – layout SEA SIDE")
+        print("ðŸ” Extraindo dados â€“ layout SEA SIDE")
 
         PAG_FIN = {1}
         PAG_HE  = {2}
 
         self.dados = {
-            "Salário Bruto (MMO)": self._somar_valor_item(r"Sal[aá]rio\s+Bruto\s*\(MMO\)", paginas_validas=PAG_FIN, pick="last"),
-            "Vale Refeição": self._somar_valor_item(r"Vale\s+Refei", paginas_validas=PAG_FIN, pick="last"),
+            "SalÃ¡rio Bruto (MMO)": self._somar_valor_item(r"Sal[aÃ¡]rio\s+Bruto\s*\(MMO\)", paginas_validas=PAG_FIN, pick="last"),
+            "Vale RefeiÃ§Ã£o": self._somar_valor_item(r"Vale\s+Refei", paginas_validas=PAG_FIN, pick="last"),
 
-            # ✅ NOVO
-            "Segurança do Trabalhador Portuário Avulso": self._somar_seguranca_trabalhador_avulso(paginas_validas=PAG_FIN),
+            # âœ… NOVO
+            "SeguranÃ§a do Trabalhador PortuÃ¡rio Avulso": self._somar_seguranca_trabalhador_avulso(paginas_validas=PAG_FIN),
 
             "Encargos Administrativos": self._somar_encargos_adm(paginas_validas=PAG_FIN),
             "INSS (RAT Ajustado)": self._somar_rat_ajustado(paginas_validas=PAG_FIN, lookahead=8),
-            "Taxas Bancárias": self._somar_valor_item(r"Taxas\s+Banc", paginas_validas=PAG_FIN, pick="last"),
+            "Taxas BancÃ¡rias": self._somar_valor_item(r"Taxas\s+Banc", paginas_validas=PAG_FIN, pick="last"),
             "Horas Extras": self._somar_valor_item(r"Horas?\s+Extras?", paginas_validas=PAG_HE, pick="last"),
         }
 
@@ -787,7 +787,7 @@ class FaturamentoSaoSebastiao:
 
             for linha in linhas:
                 if re.search(regex_nome, linha, re.IGNORECASE):
-                    # pega BR e US e também casos com espaço no milhar
+                    # pega BR e US e tambÃ©m casos com espaÃ§o no milhar
                     valores = re.findall(r"\d[\d\.\s]*,\d{2}|\d[\d\.\s]*\.\d{2}", linha)
                     if valores:
                         val = self._br_or_us_to_float(valores[-1].replace(" ", ""))
@@ -807,12 +807,12 @@ class FaturamentoSaoSebastiao:
 
             for linha in item["texto"].splitlines():
                 if re.search(r"Encargos\s+Administrativos?", linha, re.IGNORECASE):
-                    # ✅ remove o bloco "TPAS 5,28155" ou "TPAS 5.91828"
+                    # âœ… remove o bloco "TPAS 5,28155" ou "TPAS 5.91828"
                     linha_limpa = re.sub(r"\bTPAS\b\s*\d+(?:[.,]\d+)?", " ", linha, flags=re.IGNORECASE)
 
                     vals = re.findall(padrao_valor, linha_limpa)
                     if vals:
-                        # ✅ aqui queremos o valor final da linha (ex: 68,66 / 23,67)
+                        # âœ… aqui queremos o valor final da linha (ex: 68,66 / 23,67)
                         total += self._br_or_us_to_float(vals[-1])
 
         return total
@@ -822,7 +822,7 @@ class FaturamentoSaoSebastiao:
     def _somar_ultimo_valor_por_linha(self, regex_nome: str, paginas_validas: set[int] | None = None) -> float:
         total = 0.0
 
-        # valor BR ou US, aceitando espaços
+        # valor BR ou US, aceitando espaÃ§os
         padrao_valor = r"\d{1,3}(?:\.\d{3})*,\d{2}|\b\d+\.\d{2}\b(?!\.)"
 
 
@@ -834,9 +834,9 @@ class FaturamentoSaoSebastiao:
                 continue
 
             for linha in item["texto"].splitlines():
-                ln = self._normalizar(linha)  # <<< AQUI É O PULO DO GATO
+                ln = self._normalizar(linha)  # <<< AQUI Ã‰ O PULO DO GATO
                 if rx.search(ln):
-                    vals = re.findall(padrao_valor, linha)  # pega do original pra manter número certo
+                    vals = re.findall(padrao_valor, linha)  # pega do original pra manter nÃºmero certo
                     if vals:
                         s = vals[-1].replace(" ", "")
                         total += self._br_or_us_to_float(s)
@@ -847,11 +847,11 @@ class FaturamentoSaoSebastiao:
 
     def _somar_valor_apos_rotulo(self, regex_nome: str, paginas_validas: set[int] | None = None, lookahead: int = 12) -> float:
         """
-        Acha o rótulo e busca o primeiro valor numérico nas próximas N linhas.
+        Acha o rÃ³tulo e busca o primeiro valor numÃ©rico nas prÃ³ximas N linhas.
         Resolve:
-        - valores em outra linha (Taxas Bancárias)
-        - tabelas onde os rótulos vem e os números aparecem abaixo (Horas Extras)
-        - número BR e US
+        - valores em outra linha (Taxas BancÃ¡rias)
+        - tabelas onde os rÃ³tulos vem e os nÃºmeros aparecem abaixo (Horas Extras)
+        - nÃºmero BR e US
         """
         total = 0.0
         padrao_valor = r"\d{1,3}(?:\.\d{3})*,\d{2}|\d+\.\d{2}"
@@ -865,19 +865,19 @@ class FaturamentoSaoSebastiao:
             for i, linha in enumerate(linhas):
                 if re.search(regex_nome, linha, re.IGNORECASE):
 
-                    # procura valor na mesma linha + próximas linhas
+                    # procura valor na mesma linha + prÃ³ximas linhas
                     fim = min(len(linhas), i + 1 + lookahead)
                     bloco = " ".join(linhas[i:fim])
 
                     vals = re.findall(padrao_valor, bloco)
                     if vals:
-                        total += self._br_or_us_to_float(vals[0])  # primeiro valor após o rótulo
+                        total += self._br_or_us_to_float(vals[0])  # primeiro valor apÃ³s o rÃ³tulo
         return total
 
 
     def _numero_ogmo(self, nome: str) -> int | None:
         """
-        Extrai o número do OGMO do nome do arquivo.
+        Extrai o nÃºmero do OGMO do nome do arquivo.
         Aceita:
         - 'FOLHAS OGMO 1.pdf'
         - 'FOLHAS OGMO (2).pdf'
@@ -927,18 +927,18 @@ class FaturamentoSaoSebastiao:
 
     def colar_report_layout_ss(self, wb):
         aba = next(s for s in wb.sheets if s.name.strip().lower() == "report vigia")
-        print("📌 Report (layout SS) – colando valores fixos")
+        print("ðŸ“Œ Report (layout SS) â€“ colando valores fixos")
 
         MAPA_FIXO = {
-            "Salário Bruto (MMO)": "G22",
-            "Vale Refeição": "G25",
-            "Segurança do Trabalhador Portuário Avulso": "G26",
+            "SalÃ¡rio Bruto (MMO)": "G22",
+            "Vale RefeiÃ§Ã£o": "G25",
+            "SeguranÃ§a do Trabalhador PortuÃ¡rio Avulso": "G26",
             "Encargos Administrativos": "G27",
 
 
             "INSS (RAT Ajustado)": "G30",
 
-            "Taxas Bancárias": "G32",
+            "Taxas BancÃ¡rias": "G32",
             "Horas Extras": "G35",
         }
 
@@ -948,13 +948,13 @@ class FaturamentoSaoSebastiao:
 
     def _garantir_linhas_report(self, aba, linha_base: int, total_linhas: int):
         """
-        Garante que existam `total_linhas` linhas disponíveis a partir de `linha_base`,
-        inserindo linhas abaixo e herdando formatação da linha de cima (sem Copy/PasteSpecial).
+        Garante que existam `total_linhas` linhas disponÃ­veis a partir de `linha_base`,
+        inserindo linhas abaixo e herdando formataÃ§Ã£o da linha de cima (sem Copy/PasteSpecial).
 
         Isso evita:
         - erro PasteSpecial
         - conflito com clipboard
-        - bug com células mescladas
+        - bug com cÃ©lulas mescladas
         """
         if total_linhas <= 1:
             return
@@ -966,7 +966,7 @@ class FaturamentoSaoSebastiao:
         # Precisamos criar (total_linhas - 1) linhas abaixo da base
         qtd_inserir = total_linhas - 1
 
-        # Insere em bloco (mais rápido e mais estável)
+        # Insere em bloco (mais rÃ¡pido e mais estÃ¡vel)
         # Ex: base=22, inserir 5 => insere linhas 23..27
         r = aba.api.Rows(linha_base + 1)
         for _ in range(qtd_inserir):
@@ -975,14 +975,14 @@ class FaturamentoSaoSebastiao:
 
 
     # ==================================================
-    # CONFIGURAÇÃO DE MODELO POR CLIENTE
+    # CONFIGURAÃ‡ÃƒO DE MODELO POR CLIENTE
     # ==================================================
     def obter_configuracao_cliente(self, cliente: str, porto: str) -> dict:
         """
-        ✅ Aqui fica o coração do “qual modelo usar” e “qual colagem fazer”.
-        Você falou:
+        âœ… Aqui fica o coraÃ§Ã£o do â€œqual modelo usarâ€ e â€œqual colagem fazerâ€.
+        VocÃª falou:
         - Sea Side tem modelo DIFERENTE de Wilson
-        - mas o REPORT (células) é o mesmo modo.
+        - mas o REPORT (cÃ©lulas) Ã© o mesmo modo.
         """
         if self._usa_layout_ss(cliente, porto):
             if cliente == "WILSON SONS":
@@ -1005,9 +1005,9 @@ class FaturamentoSaoSebastiao:
 
     def _escolher_pdf_inicio_fim(self) -> tuple[str, str]:
         """
-        Decide qual PDF é o início e qual é o fim.
+        Decide qual PDF Ã© o inÃ­cio e qual Ã© o fim.
         - tenta identificar OGMO 1 e OGMO 2 pelo nome
-        - fallback: primeiro selecionado = início, último = fim
+        - fallback: primeiro selecionado = inÃ­cio, Ãºltimo = fim
         Retorna (nome_pdf_inicio, nome_pdf_fim)
         """
         nomes = [p.name for p in self.caminhos_pdfs]
@@ -1037,7 +1037,7 @@ class FaturamentoSaoSebastiao:
             navio = obter_nome_navio(pasta, None)
             nd = obter_dn_da_pasta(pasta)
 
-            # ✅ aqui é o pulo do gato
+            # âœ… aqui Ã© o pulo do gato
             if len(self.caminhos_pdfs) >= 2:
                 data_ini, data_fim = self.extrair_datas_mescladas()
             else:
@@ -1056,22 +1056,22 @@ class FaturamentoSaoSebastiao:
             aba.range("C21").merge_area.value = f"DN {nd}/{ano:02d}"
 
             hoje = datetime.now()
-            meses = ["", "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+            meses = ["", "janeiro", "fevereiro", "marÃ§o", "abril", "maio", "junho",
                     "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"]
             aba.range("C39").merge_area.value = f"  Santos, {hoje.day} de {meses[hoje.month]} de {hoje.year}"
 
-            print("✅ FRONT VIGIA preenchido")
+            print("âœ… FRONT VIGIA preenchido")
 
         except StopIteration:
-            print("⚠️ Aba FRONT VIGIA não encontrada")
+            print("âš ï¸ Aba FRONT VIGIA nÃ£o encontrada")
 
     def atualizar_planilha_controle(self, wb):
         """
-        Atualiza a planilha de controle com informações do faturamento VIGIA.
-        Preenche colunas B (data), C (serviço), D (ETA), E (ETB), F (cliente), G (navio), J (DN), K (MMO/COSTS).
+        Atualiza a planilha de controle com informaÃ§Ãµes do faturamento VIGIA.
+        Preenche colunas B (data), C (serviÃ§o), D (ETA), E (ETB), F (cliente), G (navio), J (DN), K (MMO/COSTS).
         """
         try:
-            # Obter informações básicas
+            # Obter informaÃ§Ãµes bÃ¡sicas
             pasta = self.caminhos_pdfs[0].parent
             navio = obter_nome_navio(pasta, None)
             nd = obter_dn_da_pasta(pasta)
@@ -1083,7 +1083,7 @@ class FaturamentoSaoSebastiao:
             from datetime import datetime
             data_hoje = datetime.now().strftime("%d/%m/%Y")
             
-            # Obter datas do período extraído (já em formato dd/mm/yyyy)
+            # Obter datas do perÃ­odo extraÃ­do (jÃ¡ em formato dd/mm/yyyy)
             try:
                 if len(self.caminhos_pdfs) >= 2:
                     data_ini, data_fim = self.extrair_datas_mescladas()
@@ -1104,10 +1104,10 @@ class FaturamentoSaoSebastiao:
             valor_k = valor_costs or valor_mmo
             valor_l = valor_mmo if usar_mmo else None
             
-            # ✅ Abrir workbook de controle uma única vez
+            # âœ… Abrir workbook de controle uma Ãºnica vez
             criar_pasta = CriarPasta()
             caminho_planilha = criar_pasta._encontrar_planilha()
-            from yuta_helpers import openpyxl
+            from backend.app.yuta_helpers import openpyxl
             wb_controle = openpyxl.load_workbook(caminho_planilha)
             
             try:
@@ -1125,20 +1125,20 @@ class FaturamentoSaoSebastiao:
                     wb_externo=wb_controle
                 )
                 
-                # ✅ Salvar apenas uma vez
+                # âœ… Salvar apenas uma vez
                 criar_pasta.salvar_planilha_com_retry(wb_controle, caminho_planilha)
-                print("✅ Planilha de controle atualizada")
+                print("âœ… Planilha de controle atualizada")
             finally:
                 # Fechar workbook
                 wb_controle.close()
             
         except Exception as e:
-            print(f"⚠️ Erro ao atualizar planilha de controle: {e}")
+            print(f"âš ï¸ Erro ao atualizar planilha de controle: {e}")
 
     def _cliente_coluna_f_controle(self, cliente_id: str, porto_id: str, cliente_padrao: str) -> str:
         """
         Define o nome padronizado para a coluna F da planilha de controle
-        nos fluxos de São Sebastião.
+        nos fluxos de SÃ£o SebastiÃ£o.
         """
         if porto_id in {"PSS", "SAO SEBASTIAO"}:
             mapa_pss = {
@@ -1162,7 +1162,7 @@ class FaturamentoSaoSebastiao:
     def _buscar_costs_report(self, wb, desired_label: str | None = None, return_all: bool = False):
         """
         Busca valores de COSTS/MMO no REPORT VIGIA dinamicamente.
-        O valor fica na mesma linha do rótulo, podendo variar entre colunas F/G/H.
+        O valor fica na mesma linha do rÃ³tulo, podendo variar entre colunas F/G/H.
         Retorna formato brasileiro sem R$: 16.227,85
         """
         try:
@@ -1230,7 +1230,7 @@ class FaturamentoSaoSebastiao:
 
                             resultado = _valor_da_linha(linha, col_letra)
                             if resultado:
-                                print(f"🔎 REPORT {rotulo}: rótulo em {col_letra}{linha}, valor={resultado}")
+                                print(f"ðŸ”Ž REPORT {rotulo}: rÃ³tulo em {col_letra}{linha}, valor={resultado}")
                                 return resultado
                         except Exception:
                             continue
@@ -1245,12 +1245,12 @@ class FaturamentoSaoSebastiao:
                     try:
                         valor_celula = ws_report.range(f"{col_letra}{linha}").value
                         
-                        # Verifica se contém COSTS ou MMO
+                        # Verifica se contÃ©m COSTS ou MMO
                         if valor_celula and isinstance(valor_celula, str):
                             texto_upper = valor_celula.upper().strip()
                             
                             if "COSTS" in texto_upper or "MMO" in texto_upper:
-                                # Busca valor na mesma linha do rótulo
+                                # Busca valor na mesma linha do rÃ³tulo
                                 try:
                                     resultado = _valor_da_linha(linha, col_letra)
                                     if resultado:
@@ -1280,7 +1280,7 @@ class FaturamentoSaoSebastiao:
             return ""
             
         except Exception as e:
-            print(f"❌ Erro ao buscar COSTS: {e}")
+            print(f"âŒ Erro ao buscar COSTS: {e}")
             return ""
 
     # ==================================================
@@ -1294,22 +1294,22 @@ class FaturamentoSaoSebastiao:
                 break
 
         if ws_credit is None:
-            print("ℹ️ Aba Credit Note não existe — seguindo fluxo.")
+            print("â„¹ï¸ Aba Credit Note nÃ£o existe â€” seguindo fluxo.")
             return
 
         ano = datetime.now().year % 100
         ws_credit.range("C21").merge_area.value = f"CN {nd}/{ano:02d}"
-        print("✅ Credit Note preenchida (C21)")
+        print("âœ… Credit Note preenchida (C21)")
 
     # ==================================================
-    # REPORT VIGIA - PADRÃO (Aquarius e outros)
+    # REPORT VIGIA - PADRÃƒO (Aquarius e outros)
     # ==================================================
 
     def _tarifa_por_status(self, ws_report, d: date, periodo: str, status: str) -> float:
         dom_fer = self._is_domingo_ou_feriado(d)
         noite = self._is_noite_por_periodo(periodo)
 
-        # ✅ ATRACADO usa linha 9, FUNDEIO/AO_LARGO usam linha 16
+        # âœ… ATRACADO usa linha 9, FUNDEIO/AO_LARGO usam linha 16
         linha_ref = {
             "ATRACADO": 9,
             "FUNDEIO": 16,
@@ -1337,7 +1337,7 @@ class FaturamentoSaoSebastiao:
 
     def preencher_tarifa_por_linha(self, ws_report, linha_base: int, n: int, status: str, coluna_saida: str = "G"):
         """
-        Lê data em C{linha} e período em E{linha}.
+        LÃª data em C{linha} e perÃ­odo em E{linha}.
         Se status == ATRACADO/FUNDEIO/AO_LARGO: escreve tarifa na coluna_saida.
         """
         if status not in ("ATRACADO", "FUNDEIO", "AO_LARGO"):
@@ -1359,11 +1359,11 @@ class FaturamentoSaoSebastiao:
 
     def gerar_horarios(self, periodo_inicial: str, periodo_final: str) -> list[str]:
         """
-        Gera sequência entre início e fim, respeitando final diferente.
+        Gera sequÃªncia entre inÃ­cio e fim, respeitando final diferente.
         """
         seq = ["01x07", "07x13", "13x19", "19x01"]
         if periodo_inicial not in seq or periodo_final not in seq:
-            # fallback: devolve só inicial se algo vier fora do padrão
+            # fallback: devolve sÃ³ inicial se algo vier fora do padrÃ£o
             return [periodo_inicial]
 
         horarios = []
@@ -1384,11 +1384,11 @@ class FaturamentoSaoSebastiao:
 
     def _extrair_valores_reais_por_periodo_ogmo(self) -> dict[str, list[float]]:
         """
-        Extrai valores monetários diretamente das linhas do OGMO que contenham horário.
+        Extrai valores monetÃ¡rios diretamente das linhas do OGMO que contenham horÃ¡rio.
         Retorna mapa no formato: {"09x13": [valor1, valor2], "13x19": [valor]}
         """
         mapa: dict[str, list[float]] = {}
-        rx_h = re.compile(r"\b(\d{1,2})\s*[x×h\-:]\s*(\d{1,2})\b", re.I)
+        rx_h = re.compile(r"\b(\d{1,2})\s*[xÃ—h\-:]\s*(\d{1,2})\b", re.I)
         rx_v = re.compile(r"\d{1,3}(?:\.\d{3})*,\d{2}|\b\d+\.\d{2}\b(?!\.)")
 
         for item in self.paginas_texto:
@@ -1413,11 +1413,11 @@ class FaturamentoSaoSebastiao:
 
 
     # ==================================================
-    # REPORT VIGIA - PADRÃO (Aquarius e outros)
+    # REPORT VIGIA - PADRÃƒO (Aquarius e outros)
     # ==================================================
     def colar_report_padrao(self, wb):
         aba = self._achar_aba(wb, ["report vigia"])
-        print("📌 Report PADRÃO – Outros Clientes")
+        print("ðŸ“Œ Report PADRÃƒO â€“ Outros Clientes")
 
         if len(self.caminhos_pdfs) >= 2:
             data_ini, data_fim, periodo_inicial, periodo_final = self.extrair_periodo_mesclado_n()
@@ -1426,7 +1426,7 @@ class FaturamentoSaoSebastiao:
             periodo_inicial, periodo_final = self.extrair_periodo_por_horario()
 
 
-        print("DEBUG extração:",
+        print("DEBUG extraÃ§Ã£o:",
                 "data_ini=", data_ini,
                 "data_fim=", data_fim,
                 "p_ini=", periodo_inicial,
@@ -1454,15 +1454,15 @@ class FaturamentoSaoSebastiao:
             celula_data.number_format = "[$-en-US]mmmm d, aaaa"
             aba.range(f"E{linha}").value = p
 
-        # ✅ status pelo nome do navio (o "nome" com (ATRACADO)/(AO LARGO))
+        # âœ… status pelo nome do navio (o "nome" com (ATRACADO)/(AO LARGO))
         pasta = self.caminhos_pdfs[0].parent
-        navio = obter_nome_navio(pasta, None)  # você já tem
+        navio = obter_nome_navio(pasta, None)  # vocÃª jÃ¡ tem
         status = self._status_atracacao(navio)
 
-        # ✅ preenche tarifa por linha usando C e E como base
+        # âœ… preenche tarifa por linha usando C e E como base
         self.preencher_tarifa_por_linha(aba, linha_base, n, status=status, coluna_saida="G")
 
-        # ✅ sobrescreve com valor real do OGMO quando disponível (horário + valor na mesma linha)
+        # âœ… sobrescreve com valor real do OGMO quando disponÃ­vel (horÃ¡rio + valor na mesma linha)
         mapa_valores_ogmo = self._extrair_valores_reais_por_periodo_ogmo()
         if mapa_valores_ogmo:
             sobrescritos = 0
@@ -1481,9 +1481,9 @@ class FaturamentoSaoSebastiao:
                 sobrescritos += 1
 
             if sobrescritos:
-                print(f"✔ {sobrescritos} valor(es) de período sobrescrito(s) com extração direta do OGMO.")
+                print(f"âœ” {sobrescritos} valor(es) de perÃ­odo sobrescrito(s) com extraÃ§Ã£o direta do OGMO.")
 
-        print(f"✔ Colado {n} períodos + tarifa (status={status}) a partir de C{linha_base}/E{linha_base}")
+        print(f"âœ” Colado {n} perÃ­odos + tarifa (status={status}) a partir de C{linha_base}/E{linha_base}")
 
 
     def gerar_periodos_report_padrao_ssz_por_dia(self, data_ini, data_fim, periodo_inicial, periodo_final):
@@ -1492,7 +1492,7 @@ class FaturamentoSaoSebastiao:
         def norm_periodo(p: str) -> str:
             p = (p or "").strip().lower().replace(" ", "")
             p = p.replace("h", "")
-            p = p.replace("-", "x").replace("×", "x")
+            p = p.replace("-", "x").replace("Ã—", "x")
             p = p.replace(".", "")
             try:
                 a, b = p.split("x")
@@ -1511,7 +1511,7 @@ class FaturamentoSaoSebastiao:
                     return datetime.strptime(s, fmt).date()
                 except Exception:
                     pass
-            raise ValueError(f"Data inválida: {d!r}")
+            raise ValueError(f"Data invÃ¡lida: {d!r}")
 
         def seq_entre(inicio: str, fim: str) -> list[str]:
             i = ordem.index(inicio)
@@ -1532,9 +1532,9 @@ class FaturamentoSaoSebastiao:
         p_fim = self._bucket_horario_periodo(p_fim_real)
 
         if p_ini not in ordem:
-            raise ValueError(f"Período inicial inválido: {periodo_inicial!r} -> {p_ini_real!r}")
+            raise ValueError(f"PerÃ­odo inicial invÃ¡lido: {periodo_inicial!r} -> {p_ini_real!r}")
         if p_fim not in ordem:
-            raise ValueError(f"Período final inválido: {periodo_final!r} -> {p_fim_real!r}")
+            raise ValueError(f"PerÃ­odo final invÃ¡lido: {periodo_final!r} -> {p_fim_real!r}")
 
         d_ini = to_date(data_ini)
         d_fim = to_date(data_fim)
@@ -1545,21 +1545,21 @@ class FaturamentoSaoSebastiao:
         dia = d_ini
 
         while dia <= d_fim:
-            # Mantém sua regra: em dias “do meio”, começa sempre em 07x13
+            # MantÃ©m sua regra: em dias â€œdo meioâ€, comeÃ§a sempre em 07x13
             inicio = p_ini if dia == d_ini else "07x13"
 
-            # No último dia, termina no período final; caso contrário, vai até 01x07
+            # No Ãºltimo dia, termina no perÃ­odo final; caso contrÃ¡rio, vai atÃ© 01x07
             fim = p_fim if dia == d_fim else "01x07"
 
             for p in seq_entre(inicio, fim):
-                out.append((dia, p))  # mantém 01x07 no mesmo dia (como você já faz)
+                out.append((dia, p))  # mantÃ©m 01x07 no mesmo dia (como vocÃª jÃ¡ faz)
 
             dia += timedelta(days=1)
 
             if len(out) > 400:
-                raise RuntimeError("Proteção: períodos demais gerados. Verifique datas/períodos extraídos.")
+                raise RuntimeError("ProteÃ§Ã£o: perÃ­odos demais gerados. Verifique datas/perÃ­odos extraÃ­dos.")
 
-        # preserva horários reais nas bordas quando forem atípicos
+        # preserva horÃ¡rios reais nas bordas quando forem atÃ­picos
         if out:
             if p_ini_real:
                 out[0] = (out[0][0], p_ini_real)
@@ -1576,15 +1576,15 @@ class FaturamentoSaoSebastiao:
             return d.date()
         if isinstance(d, date):
             return d
-        raise ValueError(f"Data inválida para Excel: {d!r}")
+        raise ValueError(f"Data invÃ¡lida para Excel: {d!r}")
 
 
     def extrair_periodo_mesclado_n(self) -> tuple[str, str, str, str]:
         """
         Retorna (data_ini, data_fim, periodo_ini, periodo_fim)
         usando:
-        - OGMO menor número = inicio
-        - OGMO maior número = fim
+        - OGMO menor nÃºmero = inicio
+        - OGMO maior nÃºmero = fim
         Funciona com 1 ou N PDFs.
         """
         pdfs = self._ordenar_pdfs_ogmo()
@@ -1598,32 +1598,32 @@ class FaturamentoSaoSebastiao:
             di, _ = self.extrair_periodo_por_data(p_ini.name)
         except Exception as e:
             raise RuntimeError(
-                f"Não consegui extrair DATA INICIAL do OGMO {self._numero_ogmo(p_ini.name)} ({p_ini.name}). Erro: {e}"
+                f"NÃ£o consegui extrair DATA INICIAL do OGMO {self._numero_ogmo(p_ini.name)} ({p_ini.name}). Erro: {e}"
             ) from e
 
         try:
             _, df = self.extrair_periodo_por_data(p_fim.name)
         except Exception as e:
             raise RuntimeError(
-                f"Não consegui extrair DATA FINAL do OGMO {self._numero_ogmo(p_fim.name)} ({p_fim.name}). Erro: {e}"
+                f"NÃ£o consegui extrair DATA FINAL do OGMO {self._numero_ogmo(p_fim.name)} ({p_fim.name}). Erro: {e}"
             ) from e
 
         try:
             pi, _ = self.extrair_periodo_por_horario(p_ini.name)
         except Exception as e:
             raise RuntimeError(
-                f"Não consegui extrair PERÍODO INICIAL do OGMO {self._numero_ogmo(p_ini.name)} ({p_ini.name}). Erro: {e}"
+                f"NÃ£o consegui extrair PERÃODO INICIAL do OGMO {self._numero_ogmo(p_ini.name)} ({p_ini.name}). Erro: {e}"
             ) from e
 
         try:
             _, pf = self.extrair_periodo_por_horario(p_fim.name)
         except Exception as e:
             raise RuntimeError(
-                f"Não consegui extrair PERÍODO FINAL do OGMO {self._numero_ogmo(p_fim.name)} ({p_fim.name}). Erro: {e}"
+                f"NÃ£o consegui extrair PERÃODO FINAL do OGMO {self._numero_ogmo(p_fim.name)} ({p_fim.name}). Erro: {e}"
             ) from e
 
-        print(f"✔ Data inicial de: {p_ini.name} -> {di} ({pi})")
-        print(f"✔ Data final de:   {p_fim.name} -> {df} ({pf})")
+        print(f"âœ” Data inicial de: {p_ini.name} -> {di} ({pi})")
+        print(f"âœ” Data final de:   {p_fim.name} -> {df} ({pf})")
 
         return di, df, pi, pf
 
@@ -1638,7 +1638,7 @@ class FaturamentoSaoSebastiao:
 
         s = str(nome).upper()
 
-        # se tiver parênteses, pega dentro; se não, usa tudo
+        # se tiver parÃªnteses, pega dentro; se nÃ£o, usa tudo
         m = re.search(r"\((.*?)\)", s)
         dentro = m.group(1).strip() if m else s
 
@@ -1647,7 +1647,7 @@ class FaturamentoSaoSebastiao:
 
         if "ATRAC" in dentro:
             return "ATRACADO"
-        if "FUNDE" in dentro:   # ✅ FUNDEIO
+        if "FUNDE" in dentro:   # âœ… FUNDEIO
             return "FUNDEIO"
         if "AO LARGO" in dentro or "A LARGO" in dentro or "LARGO" in dentro:
             return "AO_LARGO"
@@ -1655,7 +1655,7 @@ class FaturamentoSaoSebastiao:
         return None
 
     # --------------------------------------------------
-    # 2) dia/noite pelo período OGMO (coluna E)
+    # 2) dia/noite pelo perÃ­odo OGMO (coluna E)
     # --------------------------------------------------
     def _is_noite_por_periodo(self, periodo: str) -> bool:
         p = (periodo or "").strip().upper().replace(" ", "")
@@ -1664,8 +1664,8 @@ class FaturamentoSaoSebastiao:
 
 
     # --------------------------------------------------
-    # 3) domingo/feriado (mínimo viável)
-    #    (se você já tiver função de feriado no projeto, plugue aqui)
+    # 3) domingo/feriado (mÃ­nimo viÃ¡vel)
+    #    (se vocÃª jÃ¡ tiver funÃ§Ã£o de feriado no projeto, plugue aqui)
     # --------------------------------------------------
     def _is_domingo_ou_feriado(self, d: date) -> bool:
         if isinstance(d, datetime):
@@ -1674,29 +1674,29 @@ class FaturamentoSaoSebastiao:
         if d.weekday() == 6:
             return True
 
-        # ✅ feriados nacionais fixos (mínimo)
+        # âœ… feriados nacionais fixos (mÃ­nimo)
         fixos = {
-            (1, 1),    # Confraternização Universal
+            (1, 1),    # ConfraternizaÃ§Ã£o Universal
             (4, 21),   # Tiradentes
             (5, 1),    # Dia do Trabalho
-            (9, 7),    # Independência
+            (9, 7),    # IndependÃªncia
             (10, 12),  # Nossa Sra Aparecida
             (11, 2),   # Finados
-            (11, 15),  # Proclamação da República
+            (11, 15),  # ProclamaÃ§Ã£o da RepÃºblica
             (12, 25),  # Natal
         }
         if (d.month, d.day) in fixos:
             return True
 
-        # Se você quiser incluir feriados móveis (Carnaval/Paixão/Corpus Christi),
-        # eu adiciono um cálculo de Páscoa e derivados aqui.
+        # Se vocÃª quiser incluir feriados mÃ³veis (Carnaval/PaixÃ£o/Corpus Christi),
+        # eu adiciono um cÃ¡lculo de PÃ¡scoa e derivados aqui.
         return False
 
 
     # --------------------------------------------------
     # 4) pega a tarifa ATRACADO pela regra:
-    #    - Seg-Sáb dia:   N9
-    #    - Seg-Sáb noite: O9
+    #    - Seg-SÃ¡b dia:   N9
+    #    - Seg-SÃ¡b noite: O9
     #    - Dom/Feriado dia:   P9
     #    - Dom/Feriado noite: Q9
     # --------------------------------------------------
@@ -1761,7 +1761,7 @@ class FaturamentoSaoSebastiao:
         print("DEBUG status:", status)
 
     # ==================================================
-    # EXECUÇÃO PRINCIPAL
+    # EXECUÃ‡ÃƒO PRINCIPAL
     # ==================================================
 
     def executar(self, preview=False, selection=None):
@@ -1769,14 +1769,14 @@ class FaturamentoSaoSebastiao:
             self.caminhos_pdfs = [Path(p) for p in selection["pdfs"]]
         else:
             self.selecionar_pdfs_ogmo()
-        self.carregar_pdfs()   # já faz pdfplumber e OCR só se precisar
+        self.carregar_pdfs()   # jÃ¡ faz pdfplumber e OCR sÃ³ se precisar
         self.normalizar_texto_mantendo_linhas()
 
 
 
 
         cliente, porto = self.identificar_cliente_e_porto()
-        print(f"\n🚢 FATURAMENTO OGMO – {cliente} / {porto}")
+        print(f"\nðŸš¢ FATURAMENTO OGMO â€“ {cliente} / {porto}")
 
         if cliente == "WILSON SONS":
             self.extrair_dados_layout_sea_side_wilson()
@@ -1802,7 +1802,7 @@ class FaturamentoSaoSebastiao:
 
             # FRONT
             self.preencher_front_vigia(wb)
-            # ⚠️ NÃO atualiza planilha de controle aqui (será feito após preview)
+            # âš ï¸ NÃƒO atualiza planilha de controle aqui (serÃ¡ feito apÃ³s preview)
 
             # CREDIT NOTE
             self.escrever_cn_credit_note(wb, nd)
@@ -1825,23 +1825,23 @@ class FaturamentoSaoSebastiao:
                     "selection": {"pdfs": [str(p) for p in self.caminhos_pdfs]},
                 }
 
-            # ✅ ATUALIZAR PLANILHA DE CONTROLE (só na execução final)
+            # âœ… ATUALIZAR PLANILHA DE CONTROLE (sÃ³ na execuÃ§Ã£o final)
             self.atualizar_planilha_controle(wb)
 
-            # ✅ SALVAR EXCEL (com wb aberto)
+            # âœ… SALVAR EXCEL (com wb aberto)
             caminho_excel = salvar_excel_com_nome(wb, pasta, nome_base)
-            print(f"💾 Excel salvo em: {caminho_excel}")
+            print(f"ðŸ’¾ Excel salvo em: {caminho_excel}")
 
-            # ✅ Verifica se é cliente WILLIAMS (apenas FRONT VIGIA no PDF)
+            # âœ… Verifica se Ã© cliente WILLIAMS (apenas FRONT VIGIA no PDF)
             apenas_front = "WILLIAMS" in cliente.upper()
 
-            # ✅ GERAR PDF SEM REABRIR O EXCEL (evita erro COM)
+            # âœ… GERAR PDF SEM REABRIR O EXCEL (evita erro COM)
             caminho_pdf = gerar_pdf_do_wb_aberto(
                 wb, pasta, nome_base, ignorar_abas=("NF",), apenas_front=apenas_front
             )
 
             nome_cliente = f"{cliente} - {porto}" if porto != "PADRAO" else cliente
-            anexos = [caminho_pdf]  # ✅ Removido Excel dos anexos
+            anexos = [caminho_pdf]  # âœ… Removido Excel dos anexos
             anexos.extend(self.caminhos_pdfs)
             try:
                 criar_rascunho_email_cliente(
@@ -1851,11 +1851,11 @@ class FaturamentoSaoSebastiao:
                     navio=navio,
                     usuario_nome=self.usuario_nome,
                 )
-                print("✅ Rascunho do Outlook criado com anexos.")
+                print("âœ… Rascunho do Outlook criado com anexos.")
             except Exception as e:
-                print(f"⚠️ Nao foi possivel criar rascunho do Outlook: {e}")
+                print(f"âš ï¸ Nao foi possivel criar rascunho do Outlook: {e}")
 
-            print("✅ FATURAMENTO FINALIZADO")
+            print("âœ… FATURAMENTO FINALIZADO")
 
         finally:
             wb.close()
@@ -1928,3 +1928,4 @@ class FaturamentoSaoSebastiao:
                     sh.api.Visible = vis_orig[sh.name]
 
         return caminho_pdf
+

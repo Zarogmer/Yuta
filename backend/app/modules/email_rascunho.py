@@ -1,27 +1,27 @@
-import pythoncom
+﻿import pythoncom
 import win32com.client
 from pathlib import Path
 from datetime import datetime, date
 import unicodedata
 import re
 
-from config_manager import obter_caminho_assinatura_usuario
+from backend.app.config_manager import obter_caminho_assinatura_usuario
 
 
 DEFAULT_ASSUNTO = "FATURAMENTO SANTOS {dn}/{ano} - M/V {navio}"
-ASSUNTO_SAO_SEBASTIAO = "FATURAMENTO {dn}/{ano2} - M/V {navio} - PORTO DE SÃO SEBASTIÃO"
+ASSUNTO_SAO_SEBASTIAO = "FATURAMENTO {dn}/{ano2} - M/V {navio} - PORTO DE SÃƒO SEBASTIÃƒO"
 CC_FIXO = ["financeiro@sanportlogistica.com.br"]
 DEFAULT_CORPO = """Prezados, {saudacao}!
 
-Seguem anexos faturamento e folhas OGMO do navio {navio} em referência.
+Seguem anexos faturamento e folhas OGMO do navio {navio} em referÃªncia.
 
-Obs.: Gentileza notar alteração nos dados bancários.
+Obs.: Gentileza notar alteraÃ§Ã£o nos dados bancÃ¡rios.
 
-Dados para depósito:
+Dados para depÃ³sito:
 
-Banco Itaú
+Banco ItaÃº
 
-Agência: 0447
+AgÃªncia: 0447
 
 Conta Corrente: 99807-1
 
@@ -32,14 +32,14 @@ Atenciosamente,
 
 DEFAULT_CORPO_HTML = """<div style="font-family: Arial, sans-serif; font-size: 12pt; color: #000;">
     <p>Prezados, {saudacao}!</p>
-    <p>Seguem anexos faturamento e folhas OGMO do navio {navio} em referência.</p>
-    <p><strong>Obs.:</strong> Gentileza notar alteração nos dados bancários.</p>
+    <p>Seguem anexos faturamento e folhas OGMO do navio {navio} em referÃªncia.</p>
+    <p><strong>Obs.:</strong> Gentileza notar alteraÃ§Ã£o nos dados bancÃ¡rios.</p>
     <table style="border: 1px solid #000; border-collapse: collapse; margin: 6px 0 10px;" cellpadding="6" cellspacing="0">
         <tr>
             <td style="padding: 6px 10px;">
-                <div><strong>Dados para depósito:</strong></div>
-                <div>Banco Itaú</div>
-                <div>Agência: 0447</div>
+                <div><strong>Dados para depÃ³sito:</strong></div>
+                <div>Banco ItaÃº</div>
+                <div>AgÃªncia: 0447</div>
                 <div>Conta Corrente: 99807-1</div>
                 <div>Pix: 24.845.408/0001-22</div>
             </td>
@@ -51,66 +51,66 @@ DEFAULT_CORPO_HTML = """<div style="font-family: Arial, sans-serif; font-size: 1
 
 CORPO_SAO_SEBASTIAO = """Prezados, {saudacao}!
 
-Segue anexo faturamento do navio {navio} em referência.
+Segue anexo faturamento do navio {navio} em referÃªncia.
 
 Atenciosamente,
 """
 
 CORPO_SAO_SEBASTIAO_HTML = """<div style="font-family: Arial, sans-serif; font-size: 12pt; color: #000;">
     <p>Prezados, {saudacao}!</p>
-    <p>Segue anexo faturamento do navio {navio} em referência.</p>
+    <p>Segue anexo faturamento do navio {navio} em referÃªncia.</p>
     <p>Atenciosamente,</p>
 </div>
 """
 
 CORPO_CARGONAVE = """Prezados, {saudacao}!
 
-Gentileza nos enviar dados para emissão de nota fiscal do navio {navio} em referência.
+Gentileza nos enviar dados para emissÃ£o de nota fiscal do navio {navio} em referÃªncia.
 
 Solicitamos remessa na conta corrente abaixo no valor de {adiantamento_fmt} conforme acordo.
 
-Dados para depósito:
+Dados para depÃ³sito:
 
-Banco Itaú
+Banco ItaÃº
 
-Agência: 0447
+AgÃªncia: 0447
 
 Conta Corrente: 99807-1
 
 Pix: 24.845.408/0001-22
 
-Desde já muito obrigado.
+Desde jÃ¡ muito obrigado.
 
 Atenciosamente,
 """
 
 CORPO_CARGONAVE_HTML = """<div style="font-family: Arial, sans-serif; font-size: 12pt; color: #000;">
     <p>Prezados, {saudacao}!</p>
-    <p>Gentileza nos enviar dados para emissão de nota fiscal do navio {navio} em referência.</p>
+    <p>Gentileza nos enviar dados para emissÃ£o de nota fiscal do navio {navio} em referÃªncia.</p>
     <p>Solicitamos remessa na conta corrente abaixo no valor de <strong>{adiantamento_fmt}</strong> conforme acordo.</p>
     <table style="border: 1px solid #000; border-collapse: collapse; margin: 6px 0 10px;" cellpadding="6" cellspacing="0">
         <tr>
             <td style="padding: 6px 10px;">
-                <div><strong>Dados para depósito:</strong></div>
-                <div>Banco Itaú</div>
-                <div>Agência: 0447</div>
+                <div><strong>Dados para depÃ³sito:</strong></div>
+                <div>Banco ItaÃº</div>
+                <div>AgÃªncia: 0447</div>
                 <div>Conta Corrente: 99807-1</div>
                 <div>Pix: 24.845.408/0001-22</div>
             </td>
         </tr>
     </table>
-    <p>Desde já muito obrigado.</p>
+    <p>Desde jÃ¡ muito obrigado.</p>
     <p>Atenciosamente,</p>
 </div>
 """
 
 CORPO_ROCHAMAR = """Prezados, {saudacao}!
 
-Solicitamos o número da OC do navio em referência e seguem valores da fatura abaixo:
+Solicitamos o nÃºmero da OC do navio em referÃªncia e seguem valores da fatura abaixo:
 
 M/V {navio}
 
-Atracação: {atracacao_ini} a {atracacao_fim}
+AtracaÃ§Ã£o: {atracacao_ini} a {atracacao_fim}
 
 Despesas OGMO: {costs_fmt}
 
@@ -121,9 +121,9 @@ Atenciosamente,
 
 CORPO_ROCHAMAR_HTML = """<div style="font-family: Arial, sans-serif; font-size: 12pt; color: #000;">
     <p>Prezados, {saudacao}!</p>
-    <p>Solicitamos o número da OC do navio em referência e seguem valores da fatura abaixo:</p>
+    <p>Solicitamos o nÃºmero da OC do navio em referÃªncia e seguem valores da fatura abaixo:</p>
     <p><strong>M/V {navio}</strong></p>
-    <p>Atracação: {atracacao_ini} a {atracacao_fim}</p>
+    <p>AtracaÃ§Ã£o: {atracacao_ini} a {atracacao_fim}</p>
     <p>Despesas OGMO: {costs_fmt}</p>
     <p>Taxa Administrativa: {adm_fmt}</p>
     <p>Atenciosamente,</p>
@@ -456,7 +456,7 @@ def criar_rascunho_email_cliente(
                         cid,
                     )
                 except Exception as e:
-                    print(f"⚠️ Falha ao embutir assinatura de e-mail: {e}")
+                    print(f"âš ï¸ Falha ao embutir assinatura de e-mail: {e}")
                     mail.HTMLBody = corpo_html_final
             else:
                 mail.HTMLBody = corpo_html_final
@@ -480,3 +480,4 @@ def criar_rascunho_email_cliente(
         return True
     finally:
         pythoncom.CoUninitialize()
+

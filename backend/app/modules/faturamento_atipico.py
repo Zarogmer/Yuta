@@ -1,17 +1,17 @@
-from yuta_helpers import *
+﻿from backend.app.yuta_helpers import *
 from .faturamento_completo import FaturamentoCompleto
 
 
 class FaturamentoAtipico(FaturamentoCompleto):
     """
-    Faturamento ATÍPICO:
-    - NÃO gera ciclos por regra.
-    - Lê linhas reais do RESUMO (NAVIO): B=data, C=periodo, Z=valor
+    Faturamento ATÃPICO:
+    - NÃƒO gera ciclos por regra.
+    - LÃª linhas reais do RESUMO (NAVIO): B=data, C=periodo, Z=valor
     - Replica no REPORT VIGIA: C=data, E=periodo, G=valor
-    - ✅ Corrige ordem: Data crescente + período (06x12,12x18,18x24,00x06)
+    - âœ… Corrige ordem: Data crescente + perÃ­odo (06x12,12x18,18x24,00x06)
     """
 
-    # ordem oficial dos períodos no REPORT
+    # ordem oficial dos perÃ­odos no REPORT
     _RANK_PERIODO = {
         "06x12": 0,
         "12x18": 1,
@@ -20,8 +20,8 @@ class FaturamentoAtipico(FaturamentoCompleto):
     }
 
     # -------------------------
-    # Normalização robusta do período vindo da coluna C
-    # Aceita: "06h", "12h", "18h", "00h" e também "06x12"
+    # NormalizaÃ§Ã£o robusta do perÃ­odo vindo da coluna C
+    # Aceita: "06h", "12h", "18h", "00h" e tambÃ©m "06x12"
     # -------------------------
     def normalizar_periodo_c(self, valor_c) -> str | None:
         if not valor_c:
@@ -30,22 +30,22 @@ class FaturamentoAtipico(FaturamentoCompleto):
         s = str(valor_c).strip().lower()
         s = s.replace(" ", "")
 
-        # ✅ caso típico do teu atípico: "06h", "12h", "18h", "00h"
+        # âœ… caso tÃ­pico do teu atÃ­pico: "06h", "12h", "18h", "00h"
         m_h = re.match(r"^(\d{1,2})h$", s)
         if m_h:
             hh = int(m_h.group(1)) % 24
             mapa = {0: "00x06", 6: "06x12", 12: "12x18", 18: "18x24"}
             return mapa.get(hh)
 
-        # ✅ aceita "06", "12", "18", "00" (às vezes vem sem 'h')
+        # âœ… aceita "06", "12", "18", "00" (Ã s vezes vem sem 'h')
         if re.match(r"^\d{1,2}$", s):
             hh = int(s) % 24
             mapa = {0: "00x06", 6: "06x12", 12: "12x18", 18: "18x24"}
             return mapa.get(hh)
 
-        # ✅ aceita formatos com x/h/-, etc: "06x12", "06-12", "06:12", "06h12"
+        # âœ… aceita formatos com x/h/-, etc: "06x12", "06-12", "06:12", "06h12"
         s = s.replace("h", "")
-        s = s.replace(":", "x").replace("-", "x").replace("×", "x")
+        s = s.replace(":", "x").replace("-", "x").replace("Ã—", "x")
         s = re.sub(r"[^0-9x]", "", s)
 
         m = re.match(r"^(\d{1,2})x(\d{1,2})$", s)
@@ -59,7 +59,7 @@ class FaturamentoAtipico(FaturamentoCompleto):
         return periodo if periodo in self._RANK_PERIODO else None
 
     # -------------------------
-    # Extrai linhas reais do RESUMO (B,C,Z) e já devolve ORDENADO
+    # Extrai linhas reais do RESUMO (B,C,Z) e jÃ¡ devolve ORDENADO
     # -------------------------
     def extrair_linhas_atipico_resumo(self, ws_resumo, linha_inicio=2):
         last_row = ws_resumo.used_range.last_cell.row
@@ -107,23 +107,23 @@ class FaturamentoAtipico(FaturamentoCompleto):
             except:
                 continue
 
-            # guarda também índice original pra desempate
+            # guarda tambÃ©m Ã­ndice original pra desempate
             linhas.append((data_atual, periodo, float(valor), i))
 
         if not linhas:
             return []
 
-        # ✅ AQUI está a correção da ordem:
+        # âœ… AQUI estÃ¡ a correÃ§Ã£o da ordem:
         # 1) data crescente
-        # 2) período na ordem fixa (06x12,12x18,18x24,00x06)
-        # 3) desempate pelo índice original (mantém estabilidade)
+        # 2) perÃ­odo na ordem fixa (06x12,12x18,18x24,00x06)
+        # 3) desempate pelo Ã­ndice original (mantÃ©m estabilidade)
         linhas.sort(key=lambda x: (x[0], self._RANK_PERIODO.get(x[1], 99), x[3]))
 
-        # remove o índice antes de devolver
+        # remove o Ã­ndice antes de devolver
         return [(d, p, v) for (d, p, v, _) in linhas]
 
     # -------------------------
-    # Monta o REPORT VIGIA baseado nas linhas extraídas
+    # Monta o REPORT VIGIA baseado nas linhas extraÃ­das
     # -------------------------
     def montar_report_atipico(self):
         ws_report = self.wb2.sheets["REPORT VIGIA"]
@@ -131,7 +131,7 @@ class FaturamentoAtipico(FaturamentoCompleto):
 
         linhas = self.extrair_linhas_atipico_resumo(ws_resumo, linha_inicio=2)
         if not linhas:
-            raise RuntimeError("ATÍPICO: não encontrei linhas (B/C/Z) válidas no RESUMO do NAVIO.")
+            raise RuntimeError("ATÃPICO: nÃ£o encontrei linhas (B/C/Z) vÃ¡lidas no RESUMO do NAVIO.")
 
         linha_base = 22
         n = len(linhas)
@@ -153,7 +153,7 @@ class FaturamentoAtipico(FaturamentoCompleto):
         self.ws_front.range("D16").value = self.data_por_extenso(d_min)
         self.ws_front.range("D17").value = self.data_por_extenso(d_max)
 
-        print(f"✅ ATÍPICO: Report montado e ORDENADO com {n} linhas.")
+        print(f"âœ… ATÃPICO: Report montado e ORDENADO com {n} linhas.")
         return linhas
 
     def processar(self):
@@ -166,9 +166,9 @@ class FaturamentoAtipico(FaturamentoCompleto):
         self.gerar_planilha_calculo_cargonave()
         self.gerar_planilha_calculo_conesul()
 
-        print("✅ FATURAMENTO ATÍPICO finalizado com sucesso!")
+        print("âœ… FATURAMENTO ATÃPICO finalizado com sucesso!")
         
-        # ✅ Atualizar planilha de controle APÓS tudo estar pronto
+        # âœ… Atualizar planilha de controle APÃ“S tudo estar pronto
         self.atualizar_planilha_controle()
 
     def _preview_title(self):
@@ -176,7 +176,8 @@ class FaturamentoAtipico(FaturamentoCompleto):
 
     def processar_preview(self):
         self.preencher_front_vigia()
-        # ⚠️ NÃO atualiza planilha de controle no preview (evita duplicação)
+        # âš ï¸ NÃƒO atualiza planilha de controle no preview (evita duplicaÃ§Ã£o)
         self.processar_MMO(self.wb1, self.wb2)
         linhas = self.montar_report_atipico()
         return len(linhas)
+

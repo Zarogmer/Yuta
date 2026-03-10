@@ -1,7 +1,7 @@
-from pathlib import Path
+﻿from pathlib import Path
 from tempfile import gettempdir
 
-from yuta_helpers import (
+from backend.app.yuta_helpers import (
     ajustar_layout_pdf_por_aba,
     abrir_workbooks_de_acordo,
     escrever_de_acordo_nf,
@@ -14,7 +14,7 @@ from yuta_helpers import (
     salvar_excel_com_nome,
     selecionar_pasta_navio,
 )
-from yuta_helpers import datetime
+from backend.app.yuta_helpers import datetime
 
 from .criar_pasta import CriarPasta
 from .email_rascunho import criar_rascunho_email_cliente
@@ -63,11 +63,11 @@ class FaturamentoDeAcordo:
             "C27": None,
             "C35": 23.85,
         },
-        "A/C Delta Agenciamento Marítimo Ltda.": {
+        "A/C Delta Agenciamento MarÃ­timo Ltda.": {
             "G26": 500,
             "C27": None,
         },
-        "A/C NORTH STAR SUDESTE SERVIÇOS MARÍTIMOS LTDA.": {
+        "A/C NORTH STAR SUDESTE SERVIÃ‡OS MARÃTIMOS LTDA.": {
             "G26": 500,
             "C27": None,
             "C28": None,
@@ -87,15 +87,15 @@ class FaturamentoDeAcordo:
         for nome_cliente, regras in FaturamentoDeAcordo.REGRAS_CLIENTES.items():
             if nome_cliente in cliente_c9:
                 FaturamentoDeAcordo.aplicar_regras(ws_front, regras)
-                print(f"🔧 Regras aplicadas para cliente: {nome_cliente}")
+                print(f"ðŸ”§ Regras aplicadas para cliente: {nome_cliente}")
                 return
 
-        print("ℹ️ Nenhuma regra específica de cliente aplicada.")
+        print("â„¹ï¸ Nenhuma regra especÃ­fica de cliente aplicada.")
 
 
 
     def executar(self, preview=False, selection=None):
-        print("🚀 Iniciando execução (DE ACORDO)...")
+        print("ðŸš€ Iniciando execuÃ§Ã£o (DE ACORDO)...")
 
         pasta_faturamentos = obter_pasta_faturamentos()
         if selection and isinstance(selection, dict) and selection.get("pasta_navio"):
@@ -116,12 +116,12 @@ class FaturamentoDeAcordo:
                 pasta_navio
             )
 
-            print(f"📋 DN: {dn}")
-            print(f"🚢 Navio: {nome_navio}")
+            print(f"ðŸ“‹ DN: {dn}")
+            print(f"ðŸš¢ Navio: {nome_navio}")
             escrever_de_acordo_nf(wb, nome_navio, dn, ano=datetime.now().year)
 
             hoje = datetime.now()
-            meses = ["", "janeiro","fevereiro","março","abril","maio","junho",
+            meses = ["", "janeiro","fevereiro","marÃ§o","abril","maio","junho",
                     "julho","agosto","setembro","outubro","novembro","dezembro"]
             data_extenso = f"{hoje.day} de {meses[hoje.month]} de {hoje.year}"
 
@@ -139,12 +139,12 @@ class FaturamentoDeAcordo:
             if self.usuario_nome and "NORTH STAR" not in cliente_front:
                 ws_front.range("C42").value = f"   {self.usuario_nome}"
 
-            # 🔧 Regras por cliente
+            # ðŸ”§ Regras por cliente
             self.aplicar_regras_cliente(ws_front)
             
-            # ⚠️ NÃO atualiza planilha de controle aqui (será feito após preview)
+            # âš ï¸ NÃƒO atualiza planilha de controle aqui (serÃ¡ feito apÃ³s preview)
 
-            print("✅ Faturamento De Acordo concluído!")
+            print("âœ… Faturamento De Acordo concluÃ­do!")
 
             if preview:
                 preview_pdf = self._export_preview_pdf(ws_front, nome_base)
@@ -154,28 +154,28 @@ class FaturamentoDeAcordo:
                     "selection": {"pasta_navio": str(pasta_navio)},
                 }
 
-            # ✅ ATUALIZAR PLANILHA DE CONTROLE (só na execução final)
+            # âœ… ATUALIZAR PLANILHA DE CONTROLE (sÃ³ na execuÃ§Ã£o final)
             self._atualizar_planilha_controle(pasta_navio, nome_navio, dn, data_extenso, ws_front)
 
-            # ✅ SALVAR EXCEL (ainda dentro do try, com wb aberto)
+            # âœ… SALVAR EXCEL (ainda dentro do try, com wb aberto)
             caminho_excel = salvar_excel_com_nome(
                 wb=wb,
                 pasta_saida=pasta_navio,
                 nome_base=nome_base
             )
-            print(f"💾 Excel salvo em: {caminho_excel}")
+            print(f"ðŸ’¾ Excel salvo em: {caminho_excel}")
 
-            # ✅ GERAR PDF (passando caminho_excel corretamente)
+            # âœ… GERAR PDF (passando caminho_excel corretamente)
             caminho_pdf = gerar_pdf(
                 caminho_excel=caminho_excel,
                 pasta_saida=pasta_navio,
                 nome_base=nome_base,
                 ws=ws_front
             )
-            print(f"📑 PDF FRONT salvo em: {caminho_pdf}")
+            print(f"ðŸ“‘ PDF FRONT salvo em: {caminho_pdf}")
 
             nome_cliente = pasta_navio.parent.name.strip()
-            anexos = [caminho_pdf]  # ✅ Removido Excel dos anexos
+            anexos = [caminho_pdf]  # âœ… Removido Excel dos anexos
             try:
                 criar_rascunho_email_cliente(
                     nome_cliente,
@@ -184,17 +184,17 @@ class FaturamentoDeAcordo:
                     navio=nome_navio,
                     usuario_nome=self.usuario_nome,
                 )
-                print("✅ Rascunho do Outlook criado com anexos.")
+                print("âœ… Rascunho do Outlook criado com anexos.")
             except Exception as e:
-                print(f"⚠️ Nao foi possivel criar rascunho do Outlook: {e}")
+                print(f"âš ï¸ Nao foi possivel criar rascunho do Outlook: {e}")
 
         finally:
             fechar_workbooks(app=app, wb_cliente=wb)
 
     def _atualizar_planilha_controle(self, pasta_navio: Path, nome_navio: str, dn: str, data_extenso: str, ws_front):
         """
-        Atualiza a planilha de controle com informações do DE ACORDO.
-        Preenche colunas B (data), C (serviço), D (ETA), E (ETB), F (cliente), G (navio), J (DN), K (valor total), O (ISS).
+        Atualiza a planilha de controle com informaÃ§Ãµes do DE ACORDO.
+        Preenche colunas B (data), C (serviÃ§o), D (ETA), E (ETB), F (cliente), G (navio), J (DN), K (valor total), O (ISS).
         """
         try:
             cliente = pasta_navio.parent.name.strip()
@@ -203,25 +203,25 @@ class FaturamentoDeAcordo:
             from datetime import datetime
             data_hoje = datetime.now().strftime("%d/%m/%Y")
             
-            # ✅ Ler valor da FRONT VIGIA para coluna K no controle
+            # âœ… Ler valor da FRONT VIGIA para coluna K no controle
             # Regra DE ACORDO: usar G26
             valor_total = ws_front.range("G26").value
             celula_usada = "G26"
             
-            print(f"📊 Lendo valores da FRONT VIGIA:")
+            print(f"ðŸ“Š Lendo valores da FRONT VIGIA:")
             print(f"   {celula_usada} (Valor Total): {valor_total} (tipo: {type(valor_total)})")
             
             if valor_total is None:
-                print(f"⚠️ AVISO: G26 está vazio! Verifique a planilha FRONT VIGIA.")
+                print(f"âš ï¸ AVISO: G26 estÃ¡ vazio! Verifique a planilha FRONT VIGIA.")
             
-            # ✅ Abrir workbook de controle uma única vez
+            # âœ… Abrir workbook de controle uma Ãºnica vez
             criar_pasta = CriarPasta()
             caminho_planilha = criar_pasta._encontrar_planilha()
-            from yuta_helpers import openpyxl
+            from backend.app.yuta_helpers import openpyxl
             wb_controle = openpyxl.load_workbook(caminho_planilha)
             
             try:
-                # Para DE ACORDO, D16 e D17 são iguais (mesma data) - usar formato dd/mm/yyyy
+                # Para DE ACORDO, D16 e D17 sÃ£o iguais (mesma data) - usar formato dd/mm/yyyy
                 # Usar CriarPasta para gravar na planilha (reutilizando workbook)
                 criar_pasta._gravar_planilha(
                     cliente=cliente,
@@ -233,20 +233,20 @@ class FaturamentoDeAcordo:
                     etb=data_hoje,  # Mesmo dia
                     mmo=valor_total,  # Valor de G26 vai para coluna K
                     wb_externo=wb_controle,
-                    iss_formula=True,  # Cria fórmula =K{linha}*5% na coluna O
+                    iss_formula=True,  # Cria fÃ³rmula =K{linha}*5% na coluna O
                     limpar_formulas_adm_cliente=True  # Limpa colunas N e P (ADM % e CLIENTE %)
                 )
                 
-                # ✅ Salvar apenas uma vez
+                # âœ… Salvar apenas uma vez
                 criar_pasta.salvar_planilha_com_retry(wb_controle, caminho_planilha)
-                print("✅ Planilha de controle atualizada com sucesso!")
+                print("âœ… Planilha de controle atualizada com sucesso!")
             finally:
                 # Fechar workbook
                 wb_controle.close()
             
         except Exception as e:
-            print(f"⚠️ Erro ao atualizar planilha de controle: {e}")
-            # Não levanta exceção para não interromper o fluxo principal
+            print(f"âš ï¸ Erro ao atualizar planilha de controle: {e}")
+            # NÃ£o levanta exceÃ§Ã£o para nÃ£o interromper o fluxo principal
 
     def _build_preview_text(self, nome_base, dn, nome_navio, data_extenso):
         linhas = [
@@ -275,3 +275,4 @@ class FaturamentoDeAcordo:
             OpenAfterPublish=False,
         )
         return caminho_pdf
+

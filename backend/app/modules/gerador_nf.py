@@ -13,6 +13,7 @@ import urllib.request
 import urllib.error
 import xml.etree.ElementTree as ET
 from datetime import datetime
+from pathlib import Path
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QFormLayout, QLineEdit, QTextEdit, QComboBox, QDoubleSpinBox,
@@ -22,6 +23,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QDate, QThread, pyqtSignal
 from PyQt6.QtGui import QFont
+
+from backend.app.utils.path_utils import resource_path
 
 # ──────────────────────────────────────────────
 # ESTILO DARK/PROFISSIONAL
@@ -193,8 +196,10 @@ INSCRICOES_MUNICIPAIS = {
 # CACHE SQLite
 # ──────────────────────────────────────────────
 class CacheCNPJ:
-    def __init__(self, path="tomadores_cache.db"):
-        self.conn = sqlite3.connect(path)
+    def __init__(self, path: str | None = None):
+        db_path = Path(path) if path else Path(resource_path("data/tomadores_cache.db"))
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.conn = sqlite3.connect(str(db_path))
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS tomadores (
                 cnpj TEXT PRIMARY KEY,

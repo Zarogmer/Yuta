@@ -1,0 +1,14 @@
+certifi
+comtypes
+docx
+fastapi
+holidays
+num2words
+openpyxl
+pdf2image
+pdfplumber
+Pillow
+PyQt6
+pytesseract
+uvicorn
+xlwings

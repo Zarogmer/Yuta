@@ -1,8 +1,8 @@
-from datetime import date, datetime
+﻿from datetime import date, datetime
 
 import xlwings as xw
 
-from yuta_helpers import fechar_workbooks, feriados_br, selecionar_arquivo_navio
+from backend.app.yuta_helpers import fechar_workbooks, feriados_br, selecionar_arquivo_navio
 
 
 class ProgramaRemoverPeriodo:
@@ -84,25 +84,25 @@ class ProgramaRemoverPeriodo:
         self.datas = list(dict.fromkeys(datas))
 
     def escolher_data(self):
-        print("\nDatas disponíveis:")
+        print("\nDatas disponÃ­veis:")
         for i, d in enumerate(self.datas, 1):
             print(f"{i} - {d}")
         while True:
             try:
                 return self.datas[int(input("Escolha a data: ")) - 1]
             except:
-                print("Opção inválida.")
+                print("OpÃ§Ã£o invÃ¡lida.")
 
     def escolher_periodo(self):
-        print("\nHorário:")
+        print("\nHorÃ¡rio:")
         print("1 = 06h | 2 = 12h | 3 = 18h | 4 = 00h")
         while True:
-            op = input("Opção: ").strip()
+            op = input("OpÃ§Ã£o: ").strip()
             if op in self.PERIODOS_MENU:
                 return self.PERIODOS_MENU[op]
 
     # ---------------------------
-    # Localização
+    # LocalizaÃ§Ã£o
     # ---------------------------
 
     def encontrar_linha_data(self, data_str):
@@ -138,7 +138,7 @@ class ProgramaRemoverPeriodo:
         return None
 
     # ---------------------------
-    # Encontrar período EXATO
+    # Encontrar perÃ­odo EXATO
     # ---------------------------
 
 
@@ -149,7 +149,7 @@ class ProgramaRemoverPeriodo:
         if not linha_data:
             return None
 
-        # 🔴 REGRA ESPECIAL PARA 00h
+        # ðŸ”´ REGRA ESPECIAL PARA 00h
         if periodo == "00h":
             linha_acima = linha_data - 1
             if linha_acima > 0:
@@ -159,7 +159,7 @@ class ProgramaRemoverPeriodo:
                     if p == "00h":
                         return linha_acima
 
-        # 🔽 Procura normal abaixo da data
+        # ðŸ”½ Procura normal abaixo da data
         i = linha_data + 1
         while True:
             valor_a = self.ws.range(f"A{i}").value
@@ -180,7 +180,7 @@ class ProgramaRemoverPeriodo:
 
 
     # ---------------------------
-    # Subtrações
+    # SubtraÃ§Ãµes
     # ---------------------------
 
     def subtrair_total_dia(self, linha_origem, linha_total_dia):
@@ -204,23 +204,23 @@ class ProgramaRemoverPeriodo:
                 celula.value = (celula.value or 0) - v
 
     # ---------------------------
-    # Remover período
+    # Remover perÃ­odo
     # ---------------------------
 
     def remover_periodo(self, data, periodo):
         if self.is_dia_bloqueado(data):
-            print(f"⛔ {data} é domingo ou feriado — nenhuma ação executada")
+            print(f"â›” {data} Ã© domingo ou feriado â€” nenhuma aÃ§Ã£o executada")
             return
 
         linha = self.encontrar_linha_periodo(data, periodo)
         if not linha:
-            print(f"ℹ Período {periodo} não existe em {data} — nada a remover")
+            print(f"â„¹ PerÃ­odo {periodo} nÃ£o existe em {data} â€” nada a remover")
             return
 
         linha_data = self.encontrar_linha_data(data)
         linha_total_dia = self.encontrar_total_data(linha_data)
 
-        print(f"\n🗑 Removendo período {periodo} — Data {data}")
+        print(f"\nðŸ—‘ Removendo perÃ­odo {periodo} â€” Data {data}")
 
         if linha_total_dia:
             self.subtrair_total_dia(linha, linha_total_dia)
@@ -229,10 +229,10 @@ class ProgramaRemoverPeriodo:
 
         self.ws.api.Rows(linha).Delete()
 
-        print("➖ Linha removida e totais ajustados")
+        print("âž– Linha removida e totais ajustados")
 
     # ---------------------------
-    # Execução
+    # ExecuÃ§Ã£o
     # ---------------------------
 
     def executar(self, usar_arquivo_aberto=False, selection=None):
@@ -252,11 +252,11 @@ class ProgramaRemoverPeriodo:
 
             data = data_selecionada if data_selecionada else self.escolher_data()
             if data not in self.datas:
-                raise Exception(f"Data inválida para este arquivo: {data}")
+                raise Exception(f"Data invÃ¡lida para este arquivo: {data}")
 
             periodo = periodo_selecionado if periodo_selecionado else self.escolher_periodo()
             if periodo not in self.MAPA_PERIODOS.values():
-                raise Exception(f"Período inválido: {periodo}")
+                raise Exception(f"PerÃ­odo invÃ¡lido: {periodo}")
 
             self.remover_periodo(data, periodo)
 
@@ -273,4 +273,5 @@ class ProgramaRemoverPeriodo:
     def salvar(self):
         if self.wb:
             self.wb.save()
-            print("💾 Arquivo salvo com sucesso")
+            print("ðŸ’¾ Arquivo salvo com sucesso")
+

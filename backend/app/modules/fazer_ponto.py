@@ -1,4 +1,4 @@
-from datetime import date, datetime
+﻿from datetime import date, datetime
 from pathlib import Path
 from tempfile import gettempdir
 import shutil
@@ -6,7 +6,7 @@ import time
 
 import xlwings as xw
 
-from yuta_helpers import (
+from backend.app.yuta_helpers import (
     fechar_workbooks,
     feriados_br,
     selecionar_arquivo_navio,
@@ -47,7 +47,7 @@ class FazerPonto:
     BLOCOS = {"06h": 1, "12h": 1, "18h": 2, "00h": 2}
     def garantir_total_geral_ultima_linha(self):
         """
-        Garante que a linha 'Total Geral' permaneça como a última informação da planilha.
+        Garante que a linha 'Total Geral' permaneÃ§a como a Ãºltima informaÃ§Ã£o da planilha.
         """
         linha_total_geral = self.encontrar_linha_total_geral_opcional()
         if not linha_total_geral:
@@ -68,7 +68,7 @@ class FazerPonto:
             self.ws.api.Rows(linha_total_geral).Cut()
             self.ws.api.Rows(ultima_linha_dados + 1).Insert(Shift=-4121)
             if self.debug:
-                print(f"📌 'Total Geral' movido para a linha {ultima_linha_dados + 1}")
+                print(f"ðŸ“Œ 'Total Geral' movido para a linha {ultima_linha_dados + 1}")
     ORDEM_PERIODOS = {"00h": 0, "06h": 1, "12h": 2, "18h": 3}
 
 
@@ -81,7 +81,7 @@ class FazerPonto:
     def abrir_arquivo_navio(self, caminho=None):
         caminho = caminho or self.caminho_navio or selecionar_arquivo_navio()
         if not caminho:
-            raise FileNotFoundError("Arquivo do NAVIO não selecionado")
+            raise FileNotFoundError("Arquivo do NAVIO nÃ£o selecionado")
 
         caminho_destino = Path(caminho).resolve()
         self._caminho_navio_destino = str(caminho_destino)
@@ -93,7 +93,7 @@ class FazerPonto:
 
         # Se abrir em somente leitura (rede/OneDrive), usa copia local de trabalho.
         if bool(getattr(self.wb_navio.api, "ReadOnly", False)):
-            print("⚠️ Arquivo abriu em SOMENTE LEITURA. Usando copia local temporaria para edicao.")
+            print("âš ï¸ Arquivo abriu em SOMENTE LEITURA. Usando copia local temporaria para edicao.")
             try:
                 self.wb_navio.close()
             except Exception:
@@ -166,6 +166,33 @@ class FazerPonto:
 
         return False
 
+    def _is_data_especial(self, data_str):
+        """Domingo e feriado sao tratados como a mesma categoria de dia especial."""
+        return self.is_dia_bloqueado(data_str)
+
+    def _listar_domingos_no_arquivo(self):
+        domingos = []
+        for data in self.datas or []:
+            try:
+                if self.is_domingo(data):
+                    domingos.append(data)
+            except Exception:
+                continue
+        return domingos
+
+    def _aviso_domingos_no_arquivo(self):
+        domingos = self._listar_domingos_no_arquivo()
+        if not domingos:
+            return None
+
+        if len(domingos) <= 4:
+            return f"Aviso: arquivo contem domingo(s): {', '.join(domingos)}."
+
+        return (
+            f"Aviso: arquivo contem {len(domingos)} domingo(s), "
+            f"incluindo {', '.join(domingos[:4])}."
+        )
+
     def parse_data(self, data_str):
         return datetime.strptime(data_str, "%d/%m/%Y")
 
@@ -206,26 +233,26 @@ class FazerPonto:
             raise Exception("Nenhuma data encontrada na coluna B.")
 
     def escolher_data(self):
-        print("\nDatas disponíveis:")
+        print("\nDatas disponÃ­veis:")
         for i, d in enumerate(self.datas, 1):
             print(f"{i} - {d}")
         while True:
             try:
                 return self.datas[int(input("Escolha a data: ")) - 1]
             except:
-                print("Opção inválida.")
+                print("OpÃ§Ã£o invÃ¡lida.")
 
     def escolher_periodo(self):
-        print("\nHorário:")
+        print("\nHorÃ¡rio:")
         print("1 = 06h | 2 = 12h | 3 = 18h | 4 = 00h")
         while True:
-            op = input("Opção: ").strip()
+            op = input("OpÃ§Ã£o: ").strip()
             if op in self.PERIODOS_MENU:
                 return self.PERIODOS_MENU[op]
 
 
     # ---------------------------
-    # Localização
+    # LocalizaÃ§Ã£o
     # ---------------------------
 
 
@@ -238,7 +265,7 @@ class FazerPonto:
                 return i
             elif valor == data_str:
                 return i
-        raise Exception(f"Data {data_str} não encontrada.")
+        raise Exception(f"Data {data_str} nÃ£o encontrada.")
 
     def encontrar_total_data(self, linha_data):
         i = linha_data + 1
@@ -246,11 +273,11 @@ class FazerPonto:
             valor_c = self.ws.range(f"C{i}").value
             valor_a = self.ws.range(f"A{i}").value
             if isinstance(valor_a, str) and self.normalizar_texto(valor_a) == "totalgeral":
-                raise Exception("❌ Total do dia não encontrado antes do Total Geral")
+                raise Exception("âŒ Total do dia nÃ£o encontrado antes do Total Geral")
             if isinstance(valor_c, str) and self.normalizar_texto(valor_c) == "total":
                 return i
             if i > self.ws.cells.last_cell.row:
-                raise Exception("❌ Fim da planilha sem encontrar 'Total' do dia")
+                raise Exception("âŒ Fim da planilha sem encontrar 'Total' do dia")
             i += 1
 
     def encontrar_linha_periodo(self, data, periodo):
@@ -366,7 +393,17 @@ class FazerPonto:
             if idx >= len(datas_dt):
                 idx = len(datas_dt) - 1
 
+        destino_especial = self._is_data_especial(data_destino)
+
         def procurar_em_data(data, aceitar_equivalente):
+            data_especial = self._is_data_especial(data)
+
+            if destino_especial and not data_especial:
+                return None
+
+            if (not destino_especial) and data_especial:
+                return None
+
             linha_data = self.encontrar_linha_data(data)
             i = linha_data + 1
 
@@ -394,18 +431,18 @@ class FazerPonto:
                 if p == periodo:
                     self._modelo_info = f"Usando periodo {p} da data {data}"
                     if self.debug:
-                        print(f"✔ Usando {p} da data {data}")
+                        print(f"âœ” Usando {p} da data {data}")
                     return i, data
 
                 if aceitar_equivalente and p in self.EQUIVALENTES.get(periodo, []):
                     self._modelo_info = f"Usando equivalente {p} da data {data}"
                     if self.debug:
-                        print(f"⚠ Usando equivalente {p} da data {data}")
+                        print(f"âš  Usando equivalente {p} da data {data}")
                     return i, data
 
                 i += 1
 
-        # 1️⃣ Mesmo dia
+        # 1ï¸âƒ£ Mesmo dia
         if data_destino in datas_ordenadas:
             resultado = procurar_em_data(data_destino, aceitar_equivalente=True)
             if resultado:
@@ -416,8 +453,8 @@ class FazerPonto:
             if resultado:
                 return resultado
 
-        # 2️⃣ Outros dias (duas passagens)
-        # Passagem 1: somente período exato
+        # 2ï¸âƒ£ Outros dias (duas passagens)
+        # Passagem 1: somente perÃ­odo exato
         # Passagem 2: permitir equivalente (ex.: 00h <-> 18h)
         for aceitar_equivalente in (False, True):
             for offset in range(1, len(datas_ordenadas)):
@@ -425,17 +462,19 @@ class FazerPonto:
                     if 0 <= novo_idx < len(datas_ordenadas):
                         data = datas_ordenadas[novo_idx]
 
-                        if self.is_dia_bloqueado(data):
-                            if self.debug:
-                                print(f"⛔ Pulando data bloqueada: {data}")
-                            continue
-
                         resultado = procurar_em_data(data, aceitar_equivalente=aceitar_equivalente)
                         if resultado:
                             return resultado
 
+        if destino_especial:
+            raise Exception(
+                f"Nenhum modelo de domingo/feriado encontrado para o perÃ­odo '{periodo}' "
+                f"a partir da data {data_destino}. "
+                "Domingo/feriado so pode usar modelo de outro domingo ou feriado."
+            )
+
         raise Exception(
-            f"Nenhum modelo encontrado para o período '{periodo}' "
+            f"Nenhum modelo encontrado para o perÃ­odo '{periodo}' "
             f"a partir da data {data_destino}"
         )
 
@@ -454,10 +493,10 @@ class FazerPonto:
                 estrategia = "final"
 
         print(
-            f"\n✅ Criando novo dia {data} no NAVIO - "
+            f"\nâœ… Criando novo dia {data} no NAVIO - "
             f"Periodo: {periodo} (modelo: {data_modelo})"
         )
-        print(f"🧭 Estrategia de insercao: {estrategia} | linha alvo: {linha_insercao}")
+        print(f"ðŸ§­ Estrategia de insercao: {estrategia} | linha alvo: {linha_insercao}")
 
         # Estrutura minima do dia: 1 linha de periodo + 1 linha de total.
         self.ws.api.Rows(linha_insercao).Insert()
@@ -518,24 +557,17 @@ class FazerPonto:
         self._modelo_info = None
         data = self.normalizar_data_str(data)
 
-        if self.is_dia_bloqueado(data):
-            print(f"⛔ {data} é domingo ou feriado — período não será criado")
-            return {
-                "changed": False,
-                "message": f"{data} e domingo/feriado. Nenhuma alteracao aplicada.",
-            }
-
         if data not in self.datas:
             return self._criar_novo_dia_com_periodo(data, periodo)
 
         if self.encontrar_linha_periodo(data, periodo):
-            print(f"ℹ Período {periodo} já existe em {data} — nada a criar")
+            print(f"â„¹ PerÃ­odo {periodo} jÃ¡ existe em {data} â€” nada a criar")
             return {
                 "changed": False,
                 "message": f"Periodo {periodo} ja existe em {data}. Nenhuma alteracao aplicada.",
             }
 
-        # ⚠️ CHAMAR APENAS UMA VEZ
+        # âš ï¸ CHAMAR APENAS UMA VEZ
         linha_modelo, data_modelo = self.encontrar_modelo_periodo(data, periodo)
 
         linha_data = self.encontrar_linha_data(data)
@@ -545,8 +577,8 @@ class FazerPonto:
         valor_data_linha_data = self.ws.range((linha_data, 2)).value
 
         print(
-            f"\n✅ Executando FAZER PONTO no NAVIO - "
-            f"Data: {data}, Período: {periodo} "
+            f"\nâœ… Executando FAZER PONTO no NAVIO - "
+            f"Data: {data}, PerÃ­odo: {periodo} "
             f"(modelo: {data_modelo})"
         )
 
@@ -572,7 +604,7 @@ class FazerPonto:
         self.somar_linha_no_total_do_dia(linha_nova, linha_total_dia)
         self.somar_linha_no_total_geral(linha_nova)
 
-        print("➕ Linha adicionada e somada ao TOTAL DO DIA e TOTAL GERAL")
+        print("âž• Linha adicionada e somada ao TOTAL DO DIA e TOTAL GERAL")
         retorno = {
             "changed": True,
             "message": f"Periodo {periodo} inserido em {data} com sucesso.",
@@ -600,7 +632,7 @@ class FazerPonto:
                 v_total = 0
             self.ws.range((linha_total_dia, col)).value = v_total + v_origem
         if self.debug:
-            print(f"➕ Linha {linha_origem} somada ao TOTAL DO DIA")
+            print(f"âž• Linha {linha_origem} somada ao TOTAL DO DIA")
 
     def encontrar_linha_total_geral(self):
         ultima_linha = self.ws.cells.last_cell.row
@@ -608,7 +640,7 @@ class FazerPonto:
             valor_a = self.ws.range(f"A{i}").value
             if isinstance(valor_a, str) and self.normalizar_texto(valor_a) == "totalgeral":
                 return i
-        raise Exception("Total Geral não encontrado.")
+        raise Exception("Total Geral nÃ£o encontrado.")
 
     def encontrar_linha_total_geral_opcional(self):
         ultima_linha = self.ws.cells.last_cell.row
@@ -622,7 +654,7 @@ class FazerPonto:
         linha_total_geral = self.encontrar_linha_total_geral_opcional()
         if not linha_total_geral:
             if self.debug:
-                print("ℹ Linha 'Total Geral' nao encontrada; soma geral ignorada para este arquivo.")
+                print("â„¹ Linha 'Total Geral' nao encontrada; soma geral ignorada para este arquivo.")
             return
         ultima_col = self.ws.range("A1").expand("right").last_cell.column
         for col in range(4, ultima_col + 1):
@@ -636,7 +668,7 @@ class FazerPonto:
                 total_atual = 0
             celula_total.value = total_atual + valor_origem
         if self.debug:
-            print(f"➕ Linha {linha_origem} somada ao TOTAL GERAL")
+            print(f"âž• Linha {linha_origem} somada ao TOTAL GERAL")
 
     # ---------------------------
     # Executar
@@ -657,9 +689,9 @@ class FazerPonto:
             if not usar_arquivo_aberto or not self.ws:
                 self.abrir_arquivo_navio(caminho=caminho_navio)
 
-            print(f"📄 Arquivo em uso para Fazer Ponto: {self.caminho_navio}")
+            print(f"ðŸ“„ Arquivo em uso para Fazer Ponto: {self.caminho_navio}")
             if self._caminho_navio_destino:
-                print(f"🎯 Destino final (rede): {self._caminho_navio_destino}")
+                print(f"ðŸŽ¯ Destino final (rede): {self._caminho_navio_destino}")
 
             caminho_final = Path(str(self._caminho_navio_destino or self.caminho_navio)).resolve()
             if caminho_final.exists():
@@ -667,17 +699,27 @@ class FazerPonto:
 
             self.carregar_datas()
 
+            aviso_domingos = self._aviso_domingos_no_arquivo()
+            if aviso_domingos:
+                print(f"âš ï¸ {aviso_domingos}")
+
             data = data_selecionada if data_selecionada else self.escolher_data()
             data = self.normalizar_data_str(data)
 
             periodo = periodo_selecionado if periodo_selecionado else self.escolher_periodo()
             if periodo not in self.MAPA_PERIODOS.values():
-                raise Exception(f"Período inválido: {periodo}")
+                raise Exception(f"PerÃ­odo invÃ¡lido: {periodo}")
 
             resultado = self.copiar_colar(data, periodo) or {
                 "changed": False,
                 "message": "Nenhuma alteracao aplicada.",
             }
+
+            if aviso_domingos:
+                info_atual = str(resultado.get("info") or "").strip()
+                resultado["info"] = (
+                    f"{info_atual}\n{aviso_domingos}".strip() if info_atual else aviso_domingos
+                )
 
             self.salvar()
             return resultado
@@ -697,8 +739,8 @@ class FazerPonto:
                         shutil.copy2(self._save_copy_path, caminho_final)
                         time.sleep(0.15)
                         mtime_depois = caminho_final.stat().st_mtime_ns if caminho_final.exists() else None
-                        print(f"💾 Write-through aplicado: {caminho_final}")
-                        print(f"🕒 mtime antes={mtime_antes} | depois={mtime_depois}")
+                        print(f"ðŸ’¾ Write-through aplicado: {caminho_final}")
+                        print(f"ðŸ•’ mtime antes={mtime_antes} | depois={mtime_depois}")
 
                         if resultado and bool(resultado.get("changed")):
                             ok = self._periodo_existe_em_data_no_arquivo(caminho_final, data, periodo)
@@ -707,7 +749,7 @@ class FazerPonto:
                                     "Alteracao nao confirmada no arquivo final apos gravacao. "
                                     "Verifique cache/sincronizacao de rede/OneDrive."
                                 )
-                            print(f"✅ Verificacao pos-save: periodo {periodo} confirmado em {data}")
+                            print(f"âœ… Verificacao pos-save: periodo {periodo} confirmado em {data}")
                     finally:
                         try:
                             if Path(self._save_copy_path).exists():
@@ -754,7 +796,7 @@ class FazerPonto:
                 f"Salvou, mas o caminho final nao foi encontrado: {caminho_final}"
             )
 
-        print(f"💾 Arquivo NAVIO salvo com sucesso em: {caminho_final}")
+        print(f"ðŸ’¾ Arquivo NAVIO salvo com sucesso em: {caminho_final}")
 
     def _periodo_existe_em_data_no_arquivo(self, caminho_arquivo: Path, data: str, periodo: str) -> bool:
         app = None
@@ -937,12 +979,16 @@ class FazerPonto:
                 linhas.append(f"Data: {data_selecionada}")
                 linhas.append(f"Periodo: {periodo}")
 
-                if self.is_dia_bloqueado(data_selecionada):
-                    linhas.append("Status: bloqueado (domingo/feriado)")
-                elif data_selecionada in self.datas and self.encontrar_linha_periodo(data_selecionada, periodo):
+                aviso_domingos = self._aviso_domingos_no_arquivo()
+                if aviso_domingos:
+                    linhas.append(aviso_domingos)
+
+                if data_selecionada in self.datas and self.encontrar_linha_periodo(data_selecionada, periodo):
                     linhas.append("Status: periodo ja existe (nao sera criado)")
                 else:
                     _, data_modelo = self.encontrar_modelo_periodo(data_selecionada, periodo)
+                    if self._is_data_especial(data_selecionada):
+                        linhas.append("Regra: domingo/feriado usa somente domingo/feriado como modelo.")
                     if data_selecionada in self.datas:
                         linhas.append(f"Status: pronto para inserir (modelo base: {data_modelo})")
                     else:
@@ -967,3 +1013,4 @@ class FazerPonto:
 
 
 ProgramaCopiarPeriodo = FazerPonto
+
