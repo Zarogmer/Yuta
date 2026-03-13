@@ -1,0 +1,12 @@
+{
+  "_instrucoes": "Configuração personalizada por computador. Modifique 'caminho_base_faturamentos' com o caminho correto do seu PC.",
+  "_exemplo_windows": "C:\\Users\\SeuNome\\SANPORT LOGÍSTICA PORTUÁRIA LTDA\\Central de Documentos - 01. FATURAMENTOS",
+  "_exemplo_windows_alt": "C:\\Users\\SeuNome\\SANPORT LOGÍSTICA PORTUÁRIA LTDA\\Central de Documentos - Documentos\\01. FATURAMENTOS",
+  "_assinaturas_info": "Preencha os caminhos das imagens de assinatura por usuário (PNG/JPG)",
+  "assinaturas_usuarios": {
+    "CAROL CARMO": "",
+    "DIOGO BARROS": ""
+  },
+  "caminho_base_faturamentos": "",
+  "auto_detectar": true
+}

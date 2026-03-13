@@ -2,6 +2,7 @@
 import calendar
 from .email_rascunho import criar_rascunho_email_cliente
 from .criar_pasta import CriarPasta
+from backend.app.utils.path_utils import configurar_tesseract_runtime, poppler_paths_candidatos
 
 
 class FaturamentoSaoSebastiao:
@@ -53,8 +54,8 @@ class FaturamentoSaoSebastiao:
             "NÃƒO": "NAO",
             "NÃ£O": "NAO",
             "NÃ£o": "Nao",
-            "marÃ§o": "marco",
-            "MarÃ§o": "Marco",
+            "marÃ§o": "março",
+            "MarÃ§o": "Março",
             "BerÃ§o": "Berco",
         }
         for antigo, novo in trocas.items():
@@ -216,88 +217,10 @@ class FaturamentoSaoSebastiao:
         return float(s)
 
     def _poppler_paths_candidatos(self) -> list[Path]:
-        candidatos = []
-
-        env_poppler = os.environ.get("POPPLER_PATH")
-        if env_poppler:
-            candidatos.append(Path(env_poppler))
-
-        path_env = os.environ.get("PATH", "")
-        for parte in path_env.split(os.pathsep):
-            if parte and "poppler" in parte.lower():
-                candidatos.append(Path(parte))
-
-        if getattr(sys, "frozen", False):
-            meipass = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
-            exe_dir = Path(sys.executable).resolve().parent
-            candidatos.extend(
-                [
-                    meipass / "poppler" / "Library" / "bin",
-                    meipass / "poppler" / "bin",
-                    exe_dir / "poppler" / "Library" / "bin",
-                    exe_dir / "poppler" / "bin",
-                ]
-            )
-        else:
-            raiz_projeto = Path(__file__).resolve().parents[3]
-            candidatos.extend(
-                [
-                    raiz_projeto / "poppler" / "Library" / "bin",
-                    raiz_projeto / "poppler" / "bin",
-                ]
-            )
-
-        candidatos.extend(
-            [
-                Path(r"C:\poppler-25.12.0\Library\bin"),
-                Path(r"C:\poppler\Library\bin"),
-                Path(r"C:\Program Files\poppler\Library\bin"),
-                Path(r"C:\Program Files (x86)\poppler\Library\bin"),
-            ]
-        )
-
-        vistos = set()
-        validos = []
-        for pasta in candidatos:
-            chave = str(pasta).lower().strip()
-            if not chave or chave in vistos:
-                continue
-            vistos.add(chave)
-            if pasta.exists() and (pasta / "pdfinfo.exe").exists():
-                validos.append(pasta)
-        return validos
+        return poppler_paths_candidatos()
 
     def _configurar_tesseract(self):
-        candidatos = []
-
-        env_tesseract = os.environ.get("TESSERACT_EXE")
-        if env_tesseract:
-            candidatos.append(Path(env_tesseract))
-
-        if getattr(sys, "frozen", False):
-            meipass = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
-            exe_dir = Path(sys.executable).resolve().parent
-            candidatos.extend(
-                [
-                    meipass / "tesseract" / "tesseract.exe",
-                    exe_dir / "tesseract" / "tesseract.exe",
-                ]
-            )
-
-        candidatos.extend(
-            [
-                Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe"),
-                Path(r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe"),
-            ]
-        )
-
-        for exe in candidatos:
-            if exe.exists():
-                pytesseract.pytesseract.tesseract_cmd = str(exe)
-                tessdata_dir = exe.parent / "tessdata"
-                if tessdata_dir.exists():
-                    os.environ["TESSDATA_PREFIX"] = str(tessdata_dir)
-                return
+        configurar_tesseract_runtime()
 
 
 
@@ -414,19 +337,35 @@ class FaturamentoSaoSebastiao:
 
         linhas = texto_busca.splitlines()
 
+        def _data_na_linha_ou_vizinhas(i: int) -> str | None:
+            m = rx_data.search(linhas[i])
+            if m:
+                return m.group(1)
+
+            # OCR/tabela podem quebrar o valor em linhas adjacentes.
+            ini = max(0, i - 2)
+            fim = min(len(linhas), i + 3)
+            for j in range(ini, fim):
+                if j == i:
+                    continue
+                m2 = rx_data.search(linhas[j])
+                if m2:
+                    return m2.group(1)
+            return None
+
         def achar_data(bloco_rx) -> str | None:
             for i, ln in enumerate(linhas):
                 ln_norm = ln.replace("\u00ad", "")
                 if rx_per.search(ln_norm) and bloco_rx.search(ln_norm):
-                    # tenta na mesma linha
-                    m = rx_data.search(ln_norm)
-                    if m:
-                        return m.group(1)
-                    # tenta nas prÃ³ximas 2 linhas (OCR Ã s vezes joga a data abaixo)
-                    for j in range(i+1, min(i+3, len(linhas))):
-                        m2 = rx_data.search(linhas[j])
-                        if m2:
-                            return m2.group(1)
+                    achada = _data_na_linha_ou_vizinhas(i)
+                    if achada:
+                        return achada
+
+                # fallback: alguns OGMO trazem apenas "Inicial/Final" sem "Periodo"
+                if bloco_rx.search(ln_norm):
+                    achada = _data_na_linha_ou_vizinhas(i)
+                    if achada:
+                        return achada
             return None
 
         data_ini = achar_data(rx_ini)
@@ -462,22 +401,56 @@ class FaturamentoSaoSebastiao:
 
         linhas = texto_busca.splitlines()
 
+        def _horario_na_linha_ou_vizinhas(i: int) -> str | None:
+            m = rx_h.search(linhas[i])
+            if m:
+                a, b = int(m.group(1)) % 24, int(m.group(2)) % 24
+                return f"{a:02d}x{b:02d}"
+
+            ini = max(0, i - 2)
+            fim = min(len(linhas), i + 3)
+            for j in range(ini, fim):
+                if j == i:
+                    continue
+                m2 = rx_h.search(linhas[j])
+                if m2:
+                    a, b = int(m2.group(1)) % 24, int(m2.group(2)) % 24
+                    return f"{a:02d}x{b:02d}"
+            return None
+
         def achar_horario(bloco_rx) -> str | None:
             for i, ln in enumerate(linhas):
-                if rx_per.search(ln) and bloco_rx.search(ln):
-                    m = rx_h.search(ln)
-                    if m:
-                        a, b = int(m.group(1)) % 24, int(m.group(2)) % 24
-                        return f"{a:02d}x{b:02d}"
-                    for j in range(i+1, min(i+3, len(linhas))):
-                        m2 = rx_h.search(linhas[j])
-                        if m2:
-                            a, b = int(m2.group(1)) % 24, int(m2.group(2)) % 24
-                            return f"{a:02d}x{b:02d}"
+                ln_norm = ln.replace("\u00ad", "")
+                if rx_per.search(ln_norm) and bloco_rx.search(ln_norm):
+                    achado = _horario_na_linha_ou_vizinhas(i)
+                    if achado:
+                        return achado
+
+                # fallback: alguns OGMO trazem so "Inicial/Final" na linha da tabela.
+                if bloco_rx.search(ln_norm):
+                    achado = _horario_na_linha_ou_vizinhas(i)
+                    if achado:
+                        return achado
             return None
+
+        def achar_horario_global(regex: re.Pattern[str]) -> str | None:
+            m = regex.search(texto_busca)
+            if not m:
+                return None
+            a, b = int(m.group(1)) % 24, int(m.group(2)) % 24
+            return f"{a:02d}x{b:02d}"
 
         p_ini = achar_horario(rx_ini)
         p_fim = achar_horario(rx_fim)
+
+        if not p_ini:
+            p_ini = achar_horario_global(
+                re.compile(r"(?:periodo\s*)?inic(?:ial|iaI|ia1|lal)?[^\d\n]{0,25}(\d{1,2})\s*[xÃ—h\-:]\s*(\d{1,2})", re.I)
+            )
+        if not p_fim:
+            p_fim = achar_horario_global(
+                re.compile(r"(?:periodo\s*)?fina(?:l|I|1)?[^\d\n]{0,25}(\d{1,2})\s*[xÃ—h\-:]\s*(\d{1,2})", re.I)
+            )
 
         if not p_ini or not p_fim:
             raise RuntimeError(f"PerÃ­odo (horÃ¡rios) nÃ£o encontrado. ini={p_ini} fim={p_fim}")
@@ -550,6 +523,21 @@ class FaturamentoSaoSebastiao:
             return float(fim - inicio)
         return float((24 - inicio) + fim)
 
+    def _atrac_fund_do_nome(self, nome: str | None) -> str | None:
+        """
+        Extrai marcador ATRAC/FUND do nome do navio/pasta.
+        Ex.: "FEDERAL DART (ATRACADO)" -> "ATRACADO", "(...FUND)" -> "FUNDEIO".
+        """
+        if not nome:
+            return None
+
+        s = self._normalizar(nome)
+        if "fund" in s or "ao largo" in s:
+            return "FUNDEIO"
+        if "atrac" in s:
+            return "ATRACADO"
+        return None
+
     # ==================================================
     # PERÃODO MESCLADO N PDFs (primeiro que tem INI, Ãºltimo que tem FIM)
     # ==================================================
@@ -602,7 +590,6 @@ class FaturamentoSaoSebastiao:
         for item in self.paginas_texto:
             if paginas_validas is not None and item.get("page") not in paginas_validas:
                 continue
-
             linhas = item["texto"].splitlines()
 
             for i, linha in enumerate(linhas):
@@ -653,48 +640,6 @@ class FaturamentoSaoSebastiao:
             s = s.replace(" ", "").replace(".", "").replace(",", ".")
             return float(s)
 
-        def extrair_berco_ou_warehouse(self) -> str | None:
-            """
-            Extrai BERCO/WAREHOUSE do texto dos PDFs OGMO ja carregados.
-            """
-            rotulos = [
-                re.compile(r"\bber[cç]o\b\s*:?\s*(.*)", re.I),
-                re.compile(r"\bwarehouse\b\s*:?\s*(.*)", re.I),
-                re.compile(r"\bberthed\b\s*:?\s*(.*)", re.I),
-            ]
-
-            linhas = []
-            for item in self.paginas_texto:
-                texto = self._corrigir_mojibake(item.get("texto", ""))
-                linhas.extend(texto.splitlines())
-
-            for idx, linha in enumerate(linhas):
-                linha_limpa = self._corrigir_mojibake(linha).strip()
-                if not linha_limpa:
-                    continue
-
-                for rx in rotulos:
-                    m = rx.search(linha_limpa)
-                    if not m:
-                        continue
-
-                    valor = (m.group(1) or "").strip(" :-")
-                    if not valor:
-                        for j in range(idx + 1, min(idx + 4, len(linhas))):
-                            prox = self._corrigir_mojibake(linhas[j]).strip()
-                            if not prox:
-                                continue
-                            if re.search(r"\b(ber[cç]o|warehouse|berthed|sailed|periodo|per[ií]odo)\b", prox, re.I):
-                                continue
-                            valor = prox
-                            break
-
-                    if valor:
-                        valor_norm = self._corrigir_mojibake(valor).strip()
-                        return valor_norm.upper()
-
-            return None
-
         # US com milhar: 1,234.56
         if re.match(r"^\d{1,3}([,\s]\d{3})*\.\d{2}$", s):
             s = s.replace(" ", "").replace(",", "")
@@ -716,6 +661,48 @@ class FaturamentoSaoSebastiao:
         elif "," in s2:
             s2 = s2.replace(",", ".")
         return float(s2)
+
+    def extrair_berco_ou_warehouse(self) -> str | None:
+        """
+        Extrai BERCO/WAREHOUSE do texto dos PDFs OGMO ja carregados.
+        """
+        rotulos = [
+            re.compile(r"\bber[cç]o\b\s*:?\s*(.*)", re.I),
+            re.compile(r"\bwarehouse\b\s*:?\s*(.*)", re.I),
+            re.compile(r"\bberthed\b\s*:?\s*(.*)", re.I),
+        ]
+
+        linhas = []
+        for item in self.paginas_texto:
+            texto = self._corrigir_mojibake(item.get("texto", ""))
+            linhas.extend(texto.splitlines())
+
+        for idx, linha in enumerate(linhas):
+            linha_limpa = self._corrigir_mojibake(linha).strip()
+            if not linha_limpa:
+                continue
+
+            for rx in rotulos:
+                m = rx.search(linha_limpa)
+                if not m:
+                    continue
+
+                valor = (m.group(1) or "").strip(" :-")
+                if not valor:
+                    for j in range(idx + 1, min(idx + 4, len(linhas))):
+                        prox = self._corrigir_mojibake(linhas[j]).strip()
+                        if not prox:
+                            continue
+                        if re.search(r"\b(ber[cç]o|warehouse|berthed|sailed|periodo|per[ií]odo)\b", prox, re.I):
+                            continue
+                        valor = prox
+                        break
+
+                if valor:
+                    valor_norm = self._corrigir_mojibake(valor).strip()
+                    return valor_norm.upper()
+
+        return None
 
 
 
@@ -788,7 +775,8 @@ class FaturamentoSaoSebastiao:
                 continue
 
             for linha in item["texto"].splitlines():
-                if re.search(r"Seguran[cÃ§]a\s+do\s+Trabalhador\s+Portu[aÃ¡]rio\s+Avulso", linha, re.IGNORECASE):
+                # tolera acento quebrado (mojibake) e OCR variando letras.
+                if re.search(r"Segur.{0,6}\s+do\s+Trabalhador\s+Portu.{0,6}\s+Avulso", linha, re.IGNORECASE):
                     # âœ… pega sÃ³ valores monetÃ¡rios e usa o ÃšLTIMO (que Ã© o valor)
                     vals = re.findall(padrao_valor, linha)
                     if vals:
@@ -834,16 +822,44 @@ class FaturamentoSaoSebastiao:
                     total += v
         return total
 
+    def _detectar_paginas_layout_ss(self) -> tuple[set[int], set[int]]:
+        """
+        Detecta as paginas financeiras (operacionais) e administrativas por conteudo,
+        sem depender de numero fixo de pagina.
+        """
+        pag_fin: set[int] = set()
+        pag_adm: set[int] = set()
+
+        for item in self.paginas_texto:
+            p = int(item.get("page") or 0)
+            texto_n = self._normalizar(item.get("texto", ""))
+            if not p or not texto_n:
+                continue
+
+            if ("resumo do custeio" in texto_n and "valores operacionais" in texto_n) or "tpas" in texto_n:
+                pag_fin.add(p)
+
+            if ("resumo do custeio" in texto_n and "valores administrativos" in texto_n) or "ogmo" in texto_n and "administrativos" in texto_n:
+                pag_adm.add(p)
+
+        # fallback conservador para manter compatibilidade.
+        if not pag_fin:
+            pag_fin = {1}
+        if not pag_adm:
+            pag_adm = {2}
+
+        return pag_fin, pag_adm
+
 
 
     def extrair_dados_layout_sea_side_wilson(self):
         print("ðŸ” Extraindo dados â€“ layout SEA SIDE")
 
-        PAG_FIN = {1}
-        PAG_HE  = {2}
+        PAG_FIN, PAG_HE = self._detectar_paginas_layout_ss()
+        print(f"ðŸ”Ž PAGINAS detectadas layout SS: operacionais={sorted(PAG_FIN)} administrativas={sorted(PAG_HE)}")
 
         self.dados = {
-            "SalÃ¡rio Bruto (MMO)": self._somar_valor_item(r"Sal[aÃ¡]rio\s+Bruto\s*\(MMO\)", paginas_validas=PAG_FIN, pick="last"),
+            "SalÃ¡rio Bruto (MMO)": self._somar_valor_item(r"Sal.{0,6}rio\s+Bruto\s*\(MM[O0]\)", paginas_validas=PAG_FIN, pick="last"),
             "Vale RefeiÃ§Ã£o": self._somar_valor_item(r"Vale\s+Refei", paginas_validas=PAG_FIN, pick="last"),
 
             # âœ… NOVO
@@ -854,6 +870,9 @@ class FaturamentoSaoSebastiao:
             "Taxas BancÃ¡rias": self._somar_valor_item(r"Taxas\s+Banc", paginas_validas=PAG_FIN, pick="last"),
             "Horas Extras": self._somar_valor_item(r"Horas?\s+Extras?", paginas_validas=PAG_HE, pick="last"),
         }
+
+        for k, v in self.dados.items():
+            print(f"ðŸ”Ž EXTRAIDO {k}: {self._format_brl(v)}")
 
 
 
@@ -1026,7 +1045,9 @@ class FaturamentoSaoSebastiao:
         }
 
         for chave, celula in MAPA_FIXO.items():
-            aba.range(celula).value = float(self.dados.get(chave, 0.0) or 0.0)
+            valor = float(self.dados.get(chave, 0.0) or 0.0)
+            aba.range(celula).value = valor
+            print(f"ðŸ”Ž REPORT {celula} <= {chave}: {self._format_brl(valor)}")
 
 
     def _garantir_linhas_report(self, aba, linha_base: int, total_linhas: int):
@@ -1119,6 +1140,7 @@ class FaturamentoSaoSebastiao:
             pasta = self.caminhos_pdfs[0].parent
             navio = obter_nome_navio(pasta, None)
             nd = obter_dn_da_pasta(pasta)
+            cliente, porto = self.identificar_cliente_e_porto()
 
             # âœ… aqui Ã© o pulo do gato
             if len(self.caminhos_pdfs) >= 2:
@@ -1135,16 +1157,33 @@ class FaturamentoSaoSebastiao:
             aba.range("D16").merge_area.value = fmt(data_ini)
             aba.range("D17").merge_area.value = fmt(data_fim)
 
-            berco = self.extrair_berco_ou_warehouse()
-            aba.range("D18").merge_area.value = berco if berco else "NAO ENCONTRADO"
+            # Para Sea Side/Wilson SS, manter o valor padrao de WAREHOUSE do modelo.
+            if not self._usa_layout_ss(cliente, porto):
+                if cliente == "AQUARIUS" and porto == "PSS":
+                    marcador = self._atrac_fund_do_nome(navio)
+                    if marcador:
+                        aba.range("D18").merge_area.value = marcador
+                        print(f"ℹ️ FRONT VIGIA D18 preenchido por nome do navio (AQUARIUS): {marcador}")
+                    else:
+                        berco = self.extrair_berco_ou_warehouse()
+                        aba.range("D18").merge_area.value = berco if berco else "NAO ENCONTRADO"
+                else:
+                    berco = self.extrair_berco_ou_warehouse()
+                    aba.range("D18").merge_area.value = berco if berco else "NAO ENCONTRADO"
+            else:
+                print("ℹ️ FRONT VIGIA D18 mantido como padrao do modelo para layout SS.")
 
             ano = datetime.now().year % 100
             aba.range("C21").merge_area.value = f"DN {nd}/{ano:02d}"
 
             hoje = datetime.now()
-            meses = ["", "janeiro", "fevereiro", "marco", "abril", "maio", "junho",
+            meses = ["", "janeiro", "fevereiro", "março", "abril", "maio", "junho",
                 "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"]
             aba.range("C39").merge_area.value = f"  Santos, {hoje.day} de {meses[hoje.month]} de {hoje.year}"
+
+            cliente_front = str(aba.range("C9").value or "").upper()
+            if self.usuario_nome and "NORTH STAR" not in cliente_front:
+                aba.range("C42").merge_area.value = f"  {self.usuario_nome}"
 
             print("âœ… FRONT VIGIA preenchido")
 
@@ -1417,7 +1456,23 @@ class FaturamentoSaoSebastiao:
 
         cell = f"{col}{linha_ref}"
         val = ws_report.range(cell).value
-        return float(val or 0.0)
+        if val in (None, ""):
+            return 0.0
+
+        if isinstance(val, (int, float)):
+            return float(val)
+
+        s = str(val).strip()
+        # Extrai numero monetario quando a celula traz rotulo + valor.
+        m = re.search(r"\d{1,3}(?:[\.\s]\d{3})*,\d{2}|\d+\.\d{2}", s)
+        if m:
+            try:
+                return self._br_or_us_to_float(m.group(0))
+            except Exception:
+                return 0.0
+
+        print(f"⚠️ Tarifa base invalida em {cell}: {val!r}. Assumindo 0,00")
+        return 0.0
 
 
 
@@ -1733,8 +1788,8 @@ class FaturamentoSaoSebastiao:
 
         if "ATRAC" in dentro:
             return "ATRACADO"
-        if "FUNDE" in dentro:   # âœ… FUNDEIO
-            return "FUNDEIO"
+        if "FUNDE" in dentro or "FUND" in dentro:   # âœ… FUNDEIO/FUND = AO LARGO
+            return "AO_LARGO"
         if "AO LARGO" in dentro or "A LARGO" in dentro or "LARGO" in dentro:
             return "AO_LARGO"
 
@@ -1800,7 +1855,69 @@ class FaturamentoSaoSebastiao:
             cell = "Q9"  # dom/fer noite
 
         val = ws_report.range(cell).value
-        return float(val or 0.0)
+        if val in (None, ""):
+            return 0.0
+        if isinstance(val, (int, float)):
+            return float(val)
+        m = re.search(r"\d{1,3}(?:[\.\s]\d{3})*,\d{2}|\d+\.\d{2}", str(val))
+        if m:
+            try:
+                return self._br_or_us_to_float(m.group(0))
+            except Exception:
+                return 0.0
+        print(f"⚠️ Tarifa ATRACADO invalida em {cell}: {val!r}. Assumindo 0,00")
+        return 0.0
+
+    def _tarifas_da_linha(self, ws_report, linha_ref: int, col_ini: int = 14, col_fim: int = 30) -> list[float]:
+        """
+        Extrai valores monetarios da linha de tarifa (N..AD por padrao).
+        Usado quando a celula base vem com texto (ex.: 'CUSTO').
+        """
+        valores: list[float] = []
+        rx = re.compile(r"\d{1,3}(?:[\.\s]\d{3})*,\d{2}|\d+\.\d{2}")
+
+        for col_idx in range(col_ini, col_fim + 1):
+            try:
+                v = ws_report.range((linha_ref, col_idx)).value
+            except Exception:
+                continue
+
+            if v in (None, ""):
+                continue
+
+            if isinstance(v, (int, float)):
+                valores.append(float(v))
+                continue
+
+            m = rx.search(str(v))
+            if not m:
+                continue
+            try:
+                valores.append(self._br_or_us_to_float(m.group(0)))
+            except Exception:
+                continue
+
+        return valores
+
+    def _escolher_tarifa_da_lista(self, valores: list[float], dom_fer: bool, noite: bool) -> float:
+        if not valores:
+            return 0.0
+
+        idx = 0
+        if not dom_fer and not noite:
+            idx = 0
+        elif not dom_fer and noite:
+            idx = 1
+        elif dom_fer and not noite:
+            idx = 2
+        else:
+            idx = 3
+
+        if len(valores) >= 4:
+            return float(valores[idx])
+        if len(valores) >= 2:
+            return float(valores[1 if noite else 0])
+        return float(valores[0])
 
 
     # --------------------------------------------------
@@ -1840,7 +1957,25 @@ class FaturamentoSaoSebastiao:
                 cell = f"Q{linha_ref}"
 
             val = ws_report.range(cell).value
-            tarifa_base = float(val or 0.0)
+            if val in (None, ""):
+                tarifa_base = 0.0
+            elif isinstance(val, (int, float)):
+                tarifa_base = float(val)
+            else:
+                m = re.search(r"\d{1,3}(?:[\.\s]\d{3})*,\d{2}|\d+\.\d{2}", str(val))
+                if m:
+                    try:
+                        tarifa_base = self._br_or_us_to_float(m.group(0))
+                    except Exception:
+                        tarifa_base = 0.0
+                else:
+                    # AQUARIUS: tabela de tarifas traz 'CUSTO' na base; pega valores da linha inteira.
+                    tarifas_linha = self._tarifas_da_linha(ws_report, linha_ref)
+                    tarifa_base = self._escolher_tarifa_da_lista(tarifas_linha, dom_fer, noite)
+                    if tarifa_base == 0.0:
+                        print(f"⚠️ Tarifa base invalida em {cell}: {val!r}. Assumindo 0,00")
+                    else:
+                        print(f"ℹ️ Tarifa obtida da tabela da linha {linha_ref}: {tarifa_base:.2f}")
             ws_report.range(f"{coluna_saida}{linha}").value = tarifa_base
 
 

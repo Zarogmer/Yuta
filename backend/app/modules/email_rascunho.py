@@ -9,58 +9,34 @@ from backend.app.config_manager import obter_caminho_assinatura_usuario
 
 
 DEFAULT_ASSUNTO = "FATURAMENTO SANTOS {dn}/{ano} - M/V {navio}"
-ASSUNTO_SAO_SEBASTIAO = "FATURAMENTO {dn}/{ano2} - M/V {navio} - PORTO DE SÃƒO SEBASTIÃƒO"
+ASSUNTO_SAO_SEBASTIAO = "FATURAMENTO {dn}/{ano2} - M/V {navio} - PORTO DE SÃO SEBASTIÃO"
 ASSUNTO_CARGONAVE = "ADIANTAMENTO / DADOS - M/V {navio}"
 ASSUNTO_ROCHAMAR = "SOLICITAR OC - M/V {navio}"
 CC_FIXO = ["financeiro@sanportlogistica.com.br"]
-DEFAULT_CORPO = """Prezados, {saudacao}!
+DEFAULT_CORPO = """Prezados, bom dia!
 
-Seguem anexos faturamento e folhas OGMO do navio {navio} em referÃªncia.
-
-Obs.: Gentileza notar alteraÃ§Ã£o nos dados bancÃ¡rios.
-
-Dados para depÃ³sito:
-
-Banco ItaÃº
-
-AgÃªncia: 0447
-
-Conta Corrente: 99807-1
-
-Pix: 24.845.408/0001-22
+Segue anexo faturamento do navio M/V {navio} em referência.
 
 Atenciosamente,
 """
 
 DEFAULT_CORPO_HTML = """<div style="font-family: Arial, sans-serif; font-size: 12pt; color: #000;">
-    <p>Prezados, {saudacao}!</p>
-    <p>Seguem anexos faturamento e folhas OGMO do navio {navio} em referÃªncia.</p>
-    <p><strong>Obs.:</strong> Gentileza notar alteraÃ§Ã£o nos dados bancÃ¡rios.</p>
-    <table style="border: 1px solid #000; border-collapse: collapse; margin: 6px 0 10px;" cellpadding="6" cellspacing="0">
-        <tr>
-            <td style="padding: 6px 10px;">
-                <div><strong>Dados para depÃ³sito:</strong></div>
-                <div>Banco ItaÃº</div>
-                <div>AgÃªncia: 0447</div>
-                <div>Conta Corrente: 99807-1</div>
-                <div>Pix: 24.845.408/0001-22</div>
-            </td>
-        </tr>
-    </table>
+    <p>Prezados, bom dia!</p>
+    <p>Segue anexo faturamento do navio <strong>M/V {navio}</strong> em referência.</p>
     <p>Atenciosamente,</p>
 </div>
 """
 
-CORPO_SAO_SEBASTIAO = """Prezados, {saudacao}!
+CORPO_SAO_SEBASTIAO = """Prezados, bom dia!
 
-Segue anexo faturamento do navio {navio} em referÃªncia.
+Segue anexo faturamento do navio M/V {navio} em referência.
 
 Atenciosamente,
 """
 
 CORPO_SAO_SEBASTIAO_HTML = """<div style="font-family: Arial, sans-serif; font-size: 12pt; color: #000;">
-    <p>Prezados, {saudacao}!</p>
-    <p>Segue anexo faturamento do navio {navio} em referÃªncia.</p>
+    <p>Prezados, bom dia!</p>
+    <p>Segue anexo faturamento do navio <strong>M/V {navio}</strong> em referência.</p>
     <p>Atenciosamente,</p>
 </div>
 """
@@ -386,14 +362,20 @@ def _corrigir_mojibake_texto(texto: str | None) -> str:
         return ""
     s = str(texto)
 
-    # Tentativa generica de recuperar texto UTF-8 que foi lido como latin-1.
+    # Tentativa generica de recuperar texto UTF-8 que foi lido como cp1252/latin-1.
     if "Ã" in s or "Â" in s or "â" in s:
-        try:
-            rec = s.encode("latin-1").decode("utf-8")
+        for origem in ("cp1252", "latin-1"):
+            try:
+                rec = s.encode(origem).decode("utf-8")
+            except Exception:
+                continue
+
             if rec:
-                s = rec
-        except Exception:
-            pass
+                marcador_atual = s.count("Ã") + s.count("Â") + s.count("â")
+                marcador_rec = rec.count("Ã") + rec.count("Â") + rec.count("â")
+                if marcador_rec <= marcador_atual:
+                    s = rec
+                    break
 
     trocas = {
         "NÃ£o": "Não",
@@ -408,6 +390,7 @@ def _corrigir_mojibake_texto(texto: str | None) -> str:
         "jÃ¡": "já",
         "AtracaÃ§Ã£o": "Atracação",
         "SÃƒO": "SÃO",
+        "SEBASTIÃƒO": "SEBASTIÃO",
     }
     for antigo, novo in trocas.items():
         s = s.replace(antigo, novo)

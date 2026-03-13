@@ -121,8 +121,8 @@ class FaturamentoDeAcordo:
             escrever_de_acordo_nf(wb, nome_navio, dn, ano=datetime.now().year)
 
             hoje = datetime.now()
-            meses = ["", "janeiro","fevereiro","marÃ§o","abril","maio","junho",
-                    "julho","agosto","setembro","outubro","novembro","dezembro"]
+            meses = ["", "janeiro","fevereiro","março","abril","maio","junho",
+                "julho","agosto","setembro","outubro","novembro","dezembro"]
             data_extenso = f"{hoje.day} de {meses[hoje.month]} de {hoje.year}"
 
             # -------- PREENCHIMENTO FRONT --------

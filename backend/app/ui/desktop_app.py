@@ -14,7 +14,7 @@ from tkinter import messagebox, ttk
 
 from pdf2image import convert_from_path
 from PIL import Image, ImageTk
-from backend.app.utils.path_utils import project_root_path
+from backend.app.utils.path_utils import poppler_paths_candidatos
 from backend.app.yuta_helpers import fechar_workbooks
 
 from backend.app.modules import (
@@ -645,6 +645,14 @@ class DesktopApp(tk.Tk):
                 messagebox.showwarning("Dados incompletos", "Preencha cliente, navio e DN.", parent=self)
                 return
             self._executar_criar_pasta(cliente, navio, dn)
+
+        def _on_enter_criar(_event=None):
+            on_criar()
+            return "break"
+
+        for widget in (cliente_cb, navio_entry, dn_entry):
+            widget.bind("<Return>", _on_enter_criar)
+            widget.bind("<KP_Enter>", _on_enter_criar)
 
         btn_criar = ttk.Button(frame, text="Criar Pasta", style="Action.TButton", command=on_criar)
         btn_criar.pack(fill="x", padx=14, pady=4)
@@ -1717,58 +1725,7 @@ class DesktopApp(tk.Tk):
             return image
 
     def _poppler_paths_candidatos(self):
-        candidatos = []
-
-        env_poppler = os.environ.get("POPPLER_PATH")
-        if env_poppler:
-            candidatos.append(Path(env_poppler))
-
-        if getattr(sys, "frozen", False):
-            meipass = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
-            exe_dir = Path(sys.executable).resolve().parent
-            candidatos.extend(
-                [
-                    meipass / "poppler" / "Library" / "bin",
-                    meipass / "poppler" / "bin",
-                    exe_dir / "poppler" / "Library" / "bin",
-                    exe_dir / "poppler" / "bin",
-                ]
-            )
-        else:
-            raiz_projeto = project_root_path()
-            candidatos.extend(
-                [
-                    raiz_projeto / "poppler" / "Library" / "bin",
-                    raiz_projeto / "poppler" / "bin",
-                ]
-            )
-
-        path_env = os.environ.get("PATH", "")
-        for parte in path_env.split(os.pathsep):
-            if not parte:
-                continue
-            if "poppler" in parte.lower():
-                candidatos.append(Path(parte))
-
-        candidatos.extend(
-            [
-                Path(r"C:\poppler-25.12.0\Library\bin"),
-                Path(r"C:\poppler\Library\bin"),
-                Path(r"C:\Program Files\poppler\Library\bin"),
-                Path(r"C:\Program Files (x86)\poppler\Library\bin"),
-            ]
-        )
-
-        vistos = set()
-        validos = []
-        for pasta in candidatos:
-            chave = str(pasta).lower().strip()
-            if not chave or chave in vistos:
-                continue
-            vistos.add(chave)
-            if pasta.exists() and (pasta / "pdfinfo.exe").exists():
-                validos.append(pasta)
-        return validos
+        return poppler_paths_candidatos()
 
     def _abrir_pdf_externo(self, path: Path):
         try:

@@ -923,6 +923,34 @@ def _log_layout_debug(ws, etapa, info=None):
         print(f"[PDF-DEBUG] falha ao logar layout da aba '{ws.name}': {exc}")
 
 
+def _expandir_print_area_segura(ws, extra_linhas=2, extra_colunas=1):
+    """
+    Expande levemente a PrintArea atual para evitar corte de borda/rodape
+    em ambientes com diferenca de driver/motor de PDF do Excel.
+    """
+    try:
+        ps = ws.api.PageSetup
+        atual = str(ps.PrintArea or "").strip()
+        if not atual:
+            return
+
+        area = ws.api.Range(atual)
+        row1 = int(area.Row)
+        col1 = int(area.Column)
+        row2 = int(area.Row + area.Rows.Count - 1)
+        col2 = int(area.Column + area.Columns.Count - 1)
+
+        max_row = int(ws.api.Rows.Count)
+        max_col = int(ws.api.Columns.Count)
+
+        row2 = min(max_row, row2 + max(0, int(extra_linhas)))
+        col2 = min(max_col, col2 + max(0, int(extra_colunas)))
+
+        ps.PrintArea = ws.api.Range(ws.api.Cells(row1, col1), ws.api.Cells(row2, col2)).Address
+    except Exception:
+        pass
+
+
 def _aplicar_page_setup_a4(
     ws,
     uma_pagina=True,
@@ -999,7 +1027,8 @@ def ajustar_layout_report_vigia(ws_report):
             min_linhas=40,
             min_colunas=8,
             max_linhas_scan=1200,
-            max_colunas_scan=80,
+            # Limita colunas para manter apenas a area principal do report (borda esquerda).
+            max_colunas_scan=10,
         )
 
         # Evita corte da ultima borda: adiciona folga pequena ao recorte.
@@ -1058,7 +1087,18 @@ def ajustar_layout_front_vigia(ws_front):
     Uma pagina: zoom preenche A4 garantindo que caiba em 1 folha.
     """
     try:
-        _aplicar_page_setup_a4(ws_front, uma_pagina=True)
+        ps = ws_front.api.PageSetup
+        print_area_atual = str(ps.PrintArea or "").strip()
+
+        # FRONT costuma ter bordas em celulas sem valor; preservar PrintArea evita corte no cliente.
+        if print_area_atual:
+            _aplicar_page_setup_a4(ws_front, uma_pagina=True, preservar_print_area=True)
+            _expandir_print_area_segura(ws_front, extra_linhas=2, extra_colunas=1)
+        else:
+            # Fallback conservador para manter quadro completo quando o template vier sem PrintArea.
+            ps.PrintArea = ws_front.api.Range("A1:J52").Address
+            _aplicar_page_setup_a4(ws_front, uma_pagina=True, preservar_print_area=True)
+            _expandir_print_area_segura(ws_front, extra_linhas=2, extra_colunas=1)
     except Exception as e:
         print(f"Nao foi possivel ajustar layout da FRONT VIGIA: {e}")
 
@@ -1069,22 +1109,20 @@ def ajustar_layout_quitacao_credit_note(ws):
     Ignora blocos auxiliares laterais para nao "puxar" conteudo alem da borda.
     """
     try:
-        # Recalcula somente na faixa da folha principal (colunas iniciais).
-        info = limpar_planilha_para_exportacao(
-            ws,
-            min_linhas=45,
-            min_colunas=8,
-            max_linhas_scan=260,
-            max_colunas_scan=10,
-        )
+        ps = ws.api.PageSetup
+        print_area_atual = str(ps.PrintArea or "").strip()
 
-        _aplicar_page_setup_a4(
-            ws,
-            uma_pagina=True,
-            preservar_print_area=True,
-        )
+        if print_area_atual:
+            _aplicar_page_setup_a4(ws, uma_pagina=True, preservar_print_area=True)
+            _expandir_print_area_segura(ws, extra_linhas=3, extra_colunas=1)
+            _log_layout_debug(ws, "quitacao_credit_note_preservado", {"print_area": print_area_atual})
+            return
 
-        _log_layout_debug(ws, "quitacao_credit_note", info)
+        # Fallback fixo: mantem a folha principal mesmo sem PrintArea no modelo.
+        ps.PrintArea = ws.api.Range("A1:J52").Address
+        _aplicar_page_setup_a4(ws, uma_pagina=True, preservar_print_area=True)
+        _expandir_print_area_segura(ws, extra_linhas=3, extra_colunas=1)
+        _log_layout_debug(ws, "quitacao_credit_note_fallback", {"print_area": ps.PrintArea})
     except Exception as e:
         print(f"Nao foi possivel ajustar layout da aba '{ws.name}': {e}")
 

@@ -553,7 +553,7 @@ class FaturamentoCompleto:
             # -------- RODAPÃ‰ --------
             hoje = datetime.now()
             meses = [
-                "", "janeiro","fevereiro","marco","abril","maio","junho",
+                "", "janeiro","fevereiro","março","abril","maio","junho",
                 "julho","agosto","setembro","outubro","novembro","dezembro"
             ]
             self.ws_front.range("C39").value = (
@@ -1260,7 +1260,7 @@ class FaturamentoCompleto:
 
             hoje = datetime.now()
             meses = [
-                "", "janeiro", "fevereiro", "marco", "abril", "maio", "junho",
+                "", "janeiro", "fevereiro", "março", "abril", "maio", "junho",
                 "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"
             ]
 
