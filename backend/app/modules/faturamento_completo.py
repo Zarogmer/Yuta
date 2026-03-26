@@ -144,9 +144,12 @@ class FaturamentoCompleto:
                 if not anexos:
                     print("âš ï¸ Recibo PDF da CARGONAVE nÃ£o encontrado para anexar no e-mail.")
             elif nome_cliente_norm == "ROCHAMAR":
-                anexos = [caminho_report] if caminho_report.exists() else []
+                anexos = [caminho_pdf]
+                if caminho_report.exists():
+                    anexos.append(caminho_report)
             else:
-                anexos = [caminho_pdf]  # âœ… Removido Excel dos anexos
+                # Demais clientes: somente report vigia e folhas OGMO (sem faturamento principal)
+                anexos = []
                 if caminho_report.exists():
                     anexos.append(caminho_report)
                 if self.pdf_path and Path(self.pdf_path).exists():
