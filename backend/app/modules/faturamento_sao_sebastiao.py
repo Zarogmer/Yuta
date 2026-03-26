@@ -2117,9 +2117,6 @@ class FaturamentoSaoSebastiao:
                     "selection": {"pdfs": [str(p) for p in self.caminhos_pdfs]},
                 }
 
-            # âœ… ATUALIZAR PLANILHA DE CONTROLE (sÃ³ na execuÃ§Ã£o final)
-            self.atualizar_planilha_controle(wb)
-
             # âœ… SALVAR EXCEL (com wb aberto)
             caminho_excel = salvar_excel_com_nome(wb, pasta, nome_base)
             print(f"ðŸ’¾ Excel salvo em: {caminho_excel}")

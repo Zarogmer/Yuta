@@ -715,9 +715,10 @@ def _renderizar_paginas_pdf_para_bbox(caminho_pdf, dpi=160):
 
 def normalizar_pdf_final_para_a4(caminho_pdf):
     """
-    Reposiciona cada pagina gerada pelo Excel dentro de uma A4 limpa,
+    Reposiciona cada pagina gerada pelo Excel dentro de uma Letter limpa,
     usando o mesmo recorte visual do preview apenas para detectar o conteudo.
     O resultado continua sendo PDF; nao vira screenshot.
+    Padrao: Letter (21.59 x 27.94 cm) com margens estreitas.
     """
     caminho_pdf = Path(caminho_pdf)
     if not caminho_pdf.exists():
@@ -733,18 +734,15 @@ def normalizar_pdf_final_para_a4(caminho_pdf):
             return False
 
         writer = PdfWriter()
-        a4_width = _cm_para_pontos(21.0)
-        a4_height = _cm_para_pontos(29.7)
+        # Letter: 21.59 x 27.94 cm
+        letter_width = _cm_para_pontos(21.59)
+        letter_height = _cm_para_pontos(27.94)
         margin_x = _cm_para_pontos(0.64)
         margin_y = _cm_para_pontos(1.10)
-        usable_w = max(1.0, a4_width - (2 * margin_x))
-        usable_h = max(1.0, a4_height - (2 * margin_y))
+        usable_w = max(1.0, letter_width - (2 * margin_x))
+        usable_h = max(1.0, letter_height - (2 * margin_y))
 
         for idx, page in enumerate(reader.pages):
-            if _pagina_pdf_eh_report_vigia(page):
-                writer.add_page(page)
-                continue
-
             bbox_img = None
             if idx < len(paginas_img):
                 bbox_img = _bbox_conteudo_imagem_preview(paginas_img[idx])
@@ -779,7 +777,7 @@ def normalizar_pdf_final_para_a4(caminho_pdf):
             tx = margin_x + ((usable_w - (src_w * scale)) / 2.0) - (x0 * scale)
             ty = margin_y + ((usable_h - (src_h * scale)) / 2.0) - (y0 * scale)
 
-            nova_pagina = writer.add_blank_page(width=a4_width, height=a4_height)
+            nova_pagina = writer.add_blank_page(width=letter_width, height=letter_height)
             nova_pagina.merge_transformed_page(
                 page,
                 Transformation().scale(scale, scale).translate(tx, ty),
@@ -791,7 +789,7 @@ def normalizar_pdf_final_para_a4(caminho_pdf):
             writer.write(fp)
 
         caminho_tmp.replace(caminho_pdf)
-        print(f"PDF final normalizado para A4: {caminho_pdf}")
+        print(f"PDF final normalizado para Letter: {caminho_pdf}")
         return True
     except Exception as e:
         print(f"Nao foi possivel normalizar PDF final '{caminho_pdf}': {e}")
@@ -1318,7 +1316,7 @@ def _aplicar_page_setup_a4(
     Ajusta para A4 e recalcula PrintArea pela area real para evitar PDF reduzido.
     """
     xlPortrait = 1
-    xlPaperA4 = 9
+    xlPaperLetter = 1  # Letter (21.59 x 27.94 cm)
 
     app = ws.book.app
     ps = ws.api.PageSetup
@@ -1344,7 +1342,7 @@ def _aplicar_page_setup_a4(
     margem_hf = app.api.CentimetersToPoints(0.76)
 
     ps.Orientation = xlPortrait
-    ps.PaperSize = xlPaperA4
+    ps.PaperSize = xlPaperLetter
     ps.TopMargin = margem_tb
     ps.BottomMargin = margem_tb
     ps.LeftMargin = margem_lr
@@ -1399,10 +1397,10 @@ def ajustar_layout_report_vigia(ws_report):
         margem_hf = app.api.CentimetersToPoints(0.76)
 
         xlPortrait = 1
-        xlPaperA4 = 9
+        xlPaperLetter = 1  # Letter (21.59 x 27.94 cm)
 
         ps.Orientation = xlPortrait
-        ps.PaperSize = xlPaperA4
+        ps.PaperSize = xlPaperLetter
         ps.TopMargin = margem_tb
         ps.BottomMargin = margem_tb
         ps.LeftMargin = margem_lr
@@ -1596,7 +1594,7 @@ def _restaurar_page_setup_para_visualizacao(ws):
         ps = ws.api.PageSetup
 
         xlPortrait = 1
-        xlPaperA4 = 9
+        xlPaperLetter = 1  # Letter (21.59 x 27.94 cm)
 
         # Margens estreitas (mesmo preset "Narrow")
         margem_lr = app.api.CentimetersToPoints(0.64)
@@ -1604,7 +1602,7 @@ def _restaurar_page_setup_para_visualizacao(ws):
         margem_hf = app.api.CentimetersToPoints(0.76)
 
         ps.Orientation = xlPortrait
-        ps.PaperSize = xlPaperA4
+        ps.PaperSize = xlPaperLetter
         ps.TopMargin = margem_tb
         ps.BottomMargin = margem_tb
         ps.LeftMargin = margem_lr

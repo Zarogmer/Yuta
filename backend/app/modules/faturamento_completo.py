@@ -132,9 +132,6 @@ class FaturamentoCompleto:
                 pasta_navio_rede, self.dn, self.nome_navio
             )
 
-            # âœ… Atualizar planilha de controle somente apÃ³s finalizar faturamento/report
-            self.atualizar_planilha_controle()
-
             nome_cliente = pasta_navio_rede.parent.name.strip()
             caminho_report = (
                 pasta_navio_rede

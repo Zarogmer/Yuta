@@ -155,9 +155,6 @@ class FaturamentoDeAcordo:
                     "selection": {"pasta_navio": str(pasta_navio)},
                 }
 
-            # âœ… ATUALIZAR PLANILHA DE CONTROLE (sÃ³ na execuÃ§Ã£o final)
-            self._atualizar_planilha_controle(pasta_navio, nome_navio, dn, data_extenso, ws_front)
-
             # âœ… SALVAR EXCEL (ainda dentro do try, com wb aberto)
             caminho_excel = salvar_excel_com_nome(
                 wb=wb,
