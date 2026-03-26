@@ -8,6 +8,7 @@ openpyxl
 pdf2image
 pdfplumber
 Pillow
+pypdf
 PyQt6
 pytesseract
 uvicorn

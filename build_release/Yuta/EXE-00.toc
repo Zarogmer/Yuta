@@ -78,7 +78,7 @@
  [],
  False,
  False,
- 1773347781,
+ 1774480539,
  [('runw.exe',
    'C:\\Users\\Guilherme\\Documents\\Git\\Yuta\\.venv\\Lib\\site-packages\\PyInstaller\\bootloader\\Windows-64bit-intel\\runw.exe',
    'EXECUTABLE')],

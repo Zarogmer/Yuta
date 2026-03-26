@@ -26,8 +26,10 @@ import openpyxl
 from docx import Document
 from num2words import num2words
 from pdf2image import convert_from_path
+from pypdf import PdfReader, PdfWriter, Transformation
 
 from backend.app.config_manager import obter_caminho_base_faturamentos
+from backend.app.utils.path_utils import poppler_paths_candidatos
 
 
 
@@ -302,7 +304,7 @@ def escrever_de_acordo_nf(wb, nome_navio, dn, ano):
         return
 
     texto = (
-        f'SERVIÃ‡O DE ATENDIMENTO/APOIO NO "DE ACORDO" '
+        f'SERVIÇO DE ATENDIMENTO/APOIO NO "DE ACORDO" '
         f'DA RAP DO {nome_navio} DN {dn}/{ano}'
     )
 
@@ -547,6 +549,329 @@ def escrever_nf_faturamento_completo(wb_faturamento, nome_navio, dn, celula="A1"
     return True
 
 
+def _compactar_print_area_para_exportacao_final(
+    ws,
+    pad_linhas=4,
+    pad_colunas=1,
+    min_linhas=35,
+    min_colunas=8,
+    max_linhas_scan=500,
+    max_colunas_scan=40,
+):
+    """
+    Reduz espaco em branco no PDF final, aparando apenas a sobra ao final da
+    PrintArea atual. Nao altera preview e preserva a origem do template.
+    """
+    try:
+        ps = ws.api.PageSetup
+        atual = str(ps.PrintArea or "").strip()
+
+        if atual:
+            area = ws.api.Range(atual)
+            row1 = int(area.Row)
+            col1 = int(area.Column)
+            row2 = int(area.Row + area.Rows.Count - 1)
+            col2 = int(area.Column + area.Columns.Count - 1)
+        else:
+            row1 = 1
+            col1 = 1
+            info = detectar_area_util_planilha(
+                ws,
+                min_linhas=min_linhas,
+                min_colunas=min_colunas,
+                max_linhas_scan=max_linhas_scan,
+                max_colunas_scan=max_colunas_scan,
+            )
+            row2 = int(info["last_row"])
+            col2 = int(info["last_col"])
+
+        scan_row2 = min(row2, row1 + max_linhas_scan - 1)
+        scan_col2 = min(col2, col1 + max_colunas_scan - 1)
+
+        valores = _normalize_2d(ws.range((row1, col1), (scan_row2, scan_col2)).value)
+        formulas = _normalize_2d(ws.range((row1, col1), (scan_row2, scan_col2)).formula)
+
+        ultimo_row_rel = 0
+        ultimo_col_rel = 0
+        total_rows = max(0, scan_row2 - row1 + 1)
+        total_cols = max(0, scan_col2 - col1 + 1)
+
+        for i in range(total_rows):
+            linha_vals = valores[i] if i < len(valores) else []
+            linha_for = formulas[i] if i < len(formulas) else []
+            for j in range(total_cols):
+                valor = linha_vals[j] if j < len(linha_vals) else None
+                formula = linha_for[j] if j < len(linha_for) else None
+                if _tem_conteudo_celula(valor, formula):
+                    ultimo_row_rel = max(ultimo_row_rel, i + 1)
+                    ultimo_col_rel = max(ultimo_col_rel, j + 1)
+
+        if ultimo_row_rel <= 0 or ultimo_col_rel <= 0:
+            return
+
+        novo_row2 = min(row2, max(row1 + min_linhas - 1, row1 + ultimo_row_rel - 1 + pad_linhas))
+        novo_col2 = min(col2, max(col1 + min_colunas - 1, col1 + ultimo_col_rel - 1 + pad_colunas))
+
+        if novo_row2 >= row1 and novo_col2 >= col1:
+            ps.PrintArea = ws.api.Range(
+                ws.api.Cells(row1, col1),
+                ws.api.Cells(novo_row2, novo_col2),
+            ).Address
+            _log_layout_debug(ws, "compactado_exportacao_final", {
+                "last_row": novo_row2,
+                "last_col": novo_col2,
+                "scan_rows": total_rows,
+                "scan_cols": total_cols,
+            })
+    except Exception as e:
+        print(f"Nao foi possivel compactar PrintArea final da aba '{ws.name}': {e}")
+
+
+def compactar_layout_final_ws(ws):
+    nome_norm = _normalizar_nome_aba_layout(getattr(ws, "name", ""))
+    if "REPORT VIGIA" in nome_norm:
+        ajustar_layout_report_vigia_final(ws)
+        return
+
+    # FRONT VIGIA tem bordas em celulas vazias (moldura do template).
+    # Compactar por valores/formulas corta essas bordas, causando PDF
+    # sem moldura em PCs com driver de impressora diferente.
+    if "FRONT VIGIA" in nome_norm:
+        return
+
+    _compactar_print_area_para_exportacao_final(ws)
+
+
+def compactar_layout_final_wb(wb, ignorar_abas=()):
+    ignorar_norm = {
+        _normalizar_nome_aba_layout(nome)
+        for nome in (ignorar_abas or ())
+    }
+
+    for ws in wb.sheets:
+        try:
+            if not bool(ws.api.Visible):
+                continue
+        except Exception:
+            pass
+
+        nome_norm = _normalizar_nome_aba_layout(getattr(ws, "name", ""))
+        if nome_norm in ignorar_norm:
+            continue
+
+        compactar_layout_final_ws(ws)
+
+
+def _cm_para_pontos(valor_cm: float) -> float:
+    return float(valor_cm) * 72.0 / 2.54
+
+
+def _bbox_conteudo_imagem_preview(image, pad=18):
+    try:
+        gray = image.convert("L")
+        mask = gray.point(lambda p: 255 if p < 245 else 0)
+        bbox = mask.getbbox()
+        if not bbox:
+            return None
+
+        left, top, right, bottom = bbox
+        left = max(0, left - pad)
+        top = max(0, top - pad)
+        right = min(image.width, right + pad)
+        bottom = min(image.height, bottom + pad)
+        if right <= left or bottom <= top:
+            return None
+        return (left, top, right, bottom)
+    except Exception:
+        return None
+
+
+def _renderizar_paginas_pdf_para_bbox(caminho_pdf, dpi=160):
+    erros = []
+
+    try:
+        paginas = convert_from_path(str(caminho_pdf), dpi=dpi)
+        if paginas:
+            return paginas
+    except Exception as exc:
+        erros.append(str(exc))
+
+    for poppler_dir in poppler_paths_candidatos():
+        try:
+            paginas = convert_from_path(
+                str(caminho_pdf),
+                dpi=dpi,
+                poppler_path=str(poppler_dir),
+            )
+            if paginas:
+                return paginas
+        except Exception as exc:
+            erros.append(str(exc))
+
+    if erros:
+        print(f"Nao foi possivel renderizar PDF para recorte final: {erros[-1]}")
+    return []
+
+
+def normalizar_pdf_final_para_a4(caminho_pdf):
+    """
+    Reposiciona cada pagina gerada pelo Excel dentro de uma A4 limpa,
+    usando o mesmo recorte visual do preview apenas para detectar o conteudo.
+    O resultado continua sendo PDF; nao vira screenshot.
+    """
+    caminho_pdf = Path(caminho_pdf)
+    if not caminho_pdf.exists():
+        return False
+
+    try:
+        reader = PdfReader(str(caminho_pdf))
+        if not reader.pages:
+            return False
+
+        paginas_img = _renderizar_paginas_pdf_para_bbox(caminho_pdf, dpi=160)
+        if not paginas_img:
+            return False
+
+        writer = PdfWriter()
+        a4_width = _cm_para_pontos(21.0)
+        a4_height = _cm_para_pontos(29.7)
+        margin_x = _cm_para_pontos(0.64)
+        margin_y = _cm_para_pontos(1.10)
+        usable_w = max(1.0, a4_width - (2 * margin_x))
+        usable_h = max(1.0, a4_height - (2 * margin_y))
+
+        for idx, page in enumerate(reader.pages):
+            if _pagina_pdf_eh_report_vigia(page):
+                writer.add_page(page)
+                continue
+
+            bbox_img = None
+            if idx < len(paginas_img):
+                bbox_img = _bbox_conteudo_imagem_preview(paginas_img[idx])
+
+            if not bbox_img:
+                writer.add_page(page)
+                continue
+
+            media_w = float(page.mediabox.width or 0)
+            media_h = float(page.mediabox.height or 0)
+            if media_w <= 0 or media_h <= 0:
+                writer.add_page(page)
+                continue
+
+            img = paginas_img[idx]
+            scale_x = media_w / float(img.width or 1)
+            scale_y = media_h / float(img.height or 1)
+
+            left_px, top_px, right_px, bottom_px = bbox_img
+            x0 = max(0.0, left_px * scale_x)
+            x1 = min(media_w, right_px * scale_x)
+            y0 = max(0.0, media_h - (bottom_px * scale_y))
+            y1 = min(media_h, media_h - (top_px * scale_y))
+
+            src_w = max(1.0, x1 - x0)
+            src_h = max(1.0, y1 - y0)
+            scale = min(usable_w / src_w, usable_h / src_h)
+
+            page.cropbox.lower_left = (x0, y0)
+            page.cropbox.upper_right = (x1, y1)
+
+            tx = margin_x + ((usable_w - (src_w * scale)) / 2.0) - (x0 * scale)
+            ty = margin_y + ((usable_h - (src_h * scale)) / 2.0) - (y0 * scale)
+
+            nova_pagina = writer.add_blank_page(width=a4_width, height=a4_height)
+            nova_pagina.merge_transformed_page(
+                page,
+                Transformation().scale(scale, scale).translate(tx, ty),
+                over=True,
+            )
+
+        caminho_tmp = caminho_pdf.with_suffix(".tmp.pdf")
+        with open(caminho_tmp, "wb") as fp:
+            writer.write(fp)
+
+        caminho_tmp.replace(caminho_pdf)
+        print(f"PDF final normalizado para A4: {caminho_pdf}")
+        return True
+    except Exception as e:
+        print(f"Nao foi possivel normalizar PDF final '{caminho_pdf}': {e}")
+        return False
+
+
+def _pagina_pdf_eh_report_vigia(page) -> bool:
+    try:
+        texto = (page.extract_text() or "").upper()
+    except Exception:
+        return False
+
+    marcadores = (
+        "COST OF WATCHMEN",
+        "WATCHMEN",
+        "GANGWAYMAN/WATCHMEN",
+    )
+    return any(marcador in texto for marcador in marcadores)
+
+
+def _obter_dimensoes_papel_em_pontos(ws):
+    app = ws.book.app
+    ps = ws.api.PageSetup
+    paper = int(getattr(ps, "PaperSize", 9) or 9)
+    orient = int(getattr(ps, "Orientation", 1) or 1)
+    largura_cm, altura_cm = _PAPER_DIMS_CM.get(paper, _PAPER_DIMS_CM[9])
+
+    # xlLandscape = 2
+    if orient == 2:
+        largura_cm, altura_cm = altura_cm, largura_cm
+
+    return (
+        float(app.api.CentimetersToPoints(largura_cm)),
+        float(app.api.CentimetersToPoints(altura_cm)),
+    )
+
+
+def ajustar_layout_report_vigia_final(ws_report):
+    """
+    Layout final do REPORT VIGIA preservando uma unica pagina e a borda completa.
+    O preview permanece inalterado; esta regra vale so para o PDF final.
+    """
+    try:
+        ajustar_layout_report_vigia(ws_report)
+
+        ps = ws_report.api.PageSetup
+        atual = str(ps.PrintArea or "").strip()
+        if not atual:
+            return
+
+        area = ws_report.api.Range(atual)
+        row1 = int(area.Row)
+        col1 = int(area.Column)
+        row2 = int(area.Row + area.Rows.Count - 1)
+        col2 = int(area.Column + area.Columns.Count - 1)
+
+        row2 = min(row2 + 2, row1 + 1199)
+        col2 = min(max(col2, col1 + 8), col1 + 11)
+
+        ps.PrintArea = ws_report.api.Range(
+            ws_report.api.Cells(row1, col1),
+            ws_report.api.Cells(row2, col2),
+        ).Address
+        ps.Zoom = False
+        ps.FitToPagesWide = 1
+        ps.FitToPagesTall = 1
+        ps.CenterHorizontally = True
+        ps.CenterVertically = False
+
+        _log_layout_debug(ws_report, "report_vigia_final_preservado", {
+            "last_row": row2,
+            "last_col": col2,
+            "scan_rows": row2 - row1 + 1,
+            "scan_cols": col2 - col1 + 1,
+        })
+    except Exception as e:
+        print(f"Nao foi possivel ajustar layout final do REPORT VIGIA: {e}")
+
+
+
 
 
 def obter_dn_da_pasta(pasta_navio: Path) -> str:
@@ -699,7 +1024,7 @@ def obter_modelo_word_cargonave(pasta_faturamentos: Path, cliente: str = "CARGON
     )
 
 
-def gerar_pdf(caminho_excel, pasta_saida, nome_base, ws=None):
+def gerar_pdf(caminho_excel, pasta_saida, nome_base, ws=None, tipo_layout=None):
     app = xw.App(visible=False, add_book=False)
     wb = app.books.open(str(caminho_excel))
 
@@ -723,7 +1048,12 @@ def gerar_pdf(caminho_excel, pasta_saida, nome_base, ws=None):
                 )
 
             try:
-                ajustar_layout_pdf_por_aba(ws_export)
+                aplicar_layout_pdf_especifico(ws_export, tipo_layout=tipo_layout)
+            except Exception:
+                pass
+
+            try:
+                compactar_layout_final_ws(ws_export)
             except Exception:
                 pass
 
@@ -742,6 +1072,11 @@ def gerar_pdf(caminho_excel, pasta_saida, nome_base, ws=None):
             except Exception:
                 pass
 
+            try:
+                compactar_layout_final_wb(wb)
+            except Exception:
+                pass
+
             wb.api.ExportAsFixedFormat(
                 Type=0,
                 Filename=str(caminho_pdf),
@@ -750,6 +1085,11 @@ def gerar_pdf(caminho_excel, pasta_saida, nome_base, ws=None):
                 IgnorePrintAreas=False,
                 OpenAfterPublish=False,
             )
+
+        try:
+            normalizar_pdf_final_para_a4(caminho_pdf)
+        except Exception:
+            pass
 
         print(f"ðŸ“„ PDF gerado: {caminho_pdf}")
         return caminho_pdf
@@ -773,6 +1113,11 @@ def gerar_pdf_workbook_inteiro(wb, pasta_saida: Path, nome_base: str) -> Path:
     except Exception:
         pass
 
+    try:
+        compactar_layout_final_wb(wb)
+    except Exception:
+        pass
+
     wb.api.ExportAsFixedFormat(
         Type=0,  # PDF
         Filename=str(caminho_pdf),
@@ -781,6 +1126,11 @@ def gerar_pdf_workbook_inteiro(wb, pasta_saida: Path, nome_base: str) -> Path:
         IgnorePrintAreas=False,  # respeita Ã¡rea de impressÃ£o de cada aba
         OpenAfterPublish=False
     )
+
+    try:
+        normalizar_pdf_final_para_a4(caminho_pdf)
+    except Exception:
+        pass
 
     return caminho_pdf
 
@@ -823,6 +1173,8 @@ def detectar_area_util_planilha(
 ):
     """
     Detecta a area com conteudo real (valor ou formula) sem confiar em UsedRange.
+        if not reader.pages:
+            return False
     Isso evita encolhimento do PDF por colunas/linhas fantasmas no PrintArea.
     """
     try:
@@ -1127,6 +1479,30 @@ def ajustar_layout_quitacao_credit_note(ws):
         print(f"Nao foi possivel ajustar layout da aba '{ws.name}': {e}")
 
 
+def ajustar_layout_de_acordo(ws):
+    """
+    Preserva a area de impressao do template DE ACORDO.
+    Esses modelos podem ter bordas e molduras fora das celulas com valor,
+    entao recalcular a area util costuma desalinha-las no PDF.
+    """
+    try:
+        ps = ws.api.PageSetup
+        print_area_atual = str(ps.PrintArea or "").strip()
+
+        if print_area_atual:
+            _aplicar_page_setup_a4(ws, uma_pagina=True, preservar_print_area=True)
+            _expandir_print_area_segura(ws, extra_linhas=2, extra_colunas=1)
+            _log_layout_debug(ws, "de_acordo_preservado", {"print_area": print_area_atual})
+            return
+
+        ps.PrintArea = ws.api.Range("A1:J52").Address
+        _aplicar_page_setup_a4(ws, uma_pagina=True, preservar_print_area=True)
+        _expandir_print_area_segura(ws, extra_linhas=2, extra_colunas=1)
+        _log_layout_debug(ws, "de_acordo_fallback", {"print_area": ps.PrintArea})
+    except Exception as e:
+        print(f"Nao foi possivel ajustar layout DE ACORDO da aba '{ws.name}': {e}")
+
+
 def ajustar_layout_front_vigia_no_wb(wb):
     for ws in wb.sheets:
         if ws.name.strip().upper() == "FRONT VIGIA":
@@ -1174,6 +1550,16 @@ def ajustar_layout_pdf_por_aba(ws):
     ajustar_layout_planilha_generica(ws)
 
 
+def aplicar_layout_pdf_especifico(ws, tipo_layout=None):
+    tipo_norm = _normalizar_nome_aba_layout(tipo_layout or "")
+
+    if tipo_norm == "DE ACORDO":
+        ajustar_layout_de_acordo(ws)
+        return
+
+    ajustar_layout_pdf_por_aba(ws)
+
+
 def ajustar_layout_todas_abas_visiveis_no_wb(wb, ignorar_abas=()):
     ignorar_norm = {
         _normalizar_nome_aba_layout(nome)
@@ -1196,6 +1582,73 @@ def ajustar_layout_todas_abas_visiveis_no_wb(wb, ignorar_abas=()):
 
 def ajustar_layout_abas_estrategicas_no_wb(wb):
     ajustar_layout_todas_abas_visiveis_no_wb(wb)
+
+
+def _restaurar_page_setup_para_visualizacao(ws):
+    """
+    Reseta PageSetup de uma aba para visualizacao normal no Excel,
+    desfazendo FitToPages e restaurando PrintArea generosa.
+    Isso evita que bordas fiquem cortadas em PCs com drivers de
+    impressora diferentes.
+    """
+    try:
+        app = ws.book.app
+        ps = ws.api.PageSetup
+
+        xlPortrait = 1
+        xlPaperA4 = 9
+
+        # Margens estreitas (mesmo preset "Narrow")
+        margem_lr = app.api.CentimetersToPoints(0.64)
+        margem_tb = app.api.CentimetersToPoints(1.91)
+        margem_hf = app.api.CentimetersToPoints(0.76)
+
+        ps.Orientation = xlPortrait
+        ps.PaperSize = xlPaperA4
+        ps.TopMargin = margem_tb
+        ps.BottomMargin = margem_tb
+        ps.LeftMargin = margem_lr
+        ps.RightMargin = margem_lr
+        ps.HeaderMargin = margem_hf
+        ps.FooterMargin = margem_hf
+
+        # Desativa FitToPages e usa zoom fixo para nao depender da impressora.
+        ps.FitToPagesWide = False
+        ps.FitToPagesTall = False
+        ps.Zoom = 100
+
+        ps.CenterHorizontally = True
+        ps.CenterVertically = False
+
+        # PrintArea generosa para incluir todas as bordas do template.
+        ps.PrintArea = ws.api.Range("A1:J52").Address
+    except Exception as e:
+        print(f"Nao foi possivel restaurar layout de visualizacao da aba '{ws.name}': {e}")
+
+
+def restaurar_layout_excel_para_visualizacao(wb, ignorar_abas=()):
+    """
+    Restaura PageSetup de todas as abas visiveis do workbook para
+    visualizacao correta no Excel (sem FitToPages).
+    Deve ser chamado APOS a geracao do PDF e ANTES de salvar o .xlsx.
+    """
+    ignorar_norm = {
+        _normalizar_nome_aba_layout(nome)
+        for nome in (ignorar_abas or ())
+    }
+
+    for ws in wb.sheets:
+        try:
+            if not bool(ws.api.Visible):
+                continue
+        except Exception:
+            pass
+
+        nome_norm = _normalizar_nome_aba_layout(getattr(ws, "name", ""))
+        if nome_norm in ignorar_norm:
+            continue
+
+        _restaurar_page_setup_para_visualizacao(ws)
 
 
 def gerar_pdf_faturamento_completo(
@@ -1222,6 +1675,7 @@ def gerar_pdf_faturamento_completo(
         if ws_front:
             if aplicar_layout:
                 ajustar_layout_pdf_por_aba(ws_front)
+                compactar_layout_final_ws(ws_front)
             # Exporta apenas essa aba
             ws_front.api.ExportAsFixedFormat(
                 Type=0,  # PDF
@@ -1231,6 +1685,10 @@ def gerar_pdf_faturamento_completo(
                 IgnorePrintAreas=False,
                 OpenAfterPublish=False
             )
+            try:
+                normalizar_pdf_final_para_a4(caminho_pdf)
+            except Exception:
+                pass
             return caminho_pdf
         else:
             raise RuntimeError("Aba FRONT VIGIA nÃ£o encontrada para exportar PDF")
@@ -1245,6 +1703,7 @@ def gerar_pdf_faturamento_completo(
 
     if aplicar_layout:
         ajustar_layout_todas_abas_visiveis_no_wb(wb, ignorar_abas=("NF",))
+        compactar_layout_final_wb(wb, ignorar_abas=("NF",))
 
     # ðŸ“„ Exporta workbook inteiro
     wb.api.ExportAsFixedFormat(
@@ -1255,6 +1714,11 @@ def gerar_pdf_faturamento_completo(
         IgnorePrintAreas=False,
         OpenAfterPublish=False
     )
+
+    try:
+        normalizar_pdf_final_para_a4(caminho_pdf)
+    except Exception:
+        pass
 
     # ðŸ”“ Reexibe NF
     if aba_nf:
@@ -1301,6 +1765,7 @@ def gerar_pdf_do_wb_aberto(wb, pasta_saida, nome_base, ignorar_abas=("nf",), ape
         
         if ws_front:
             ajustar_layout_pdf_por_aba(ws_front)
+            compactar_layout_final_ws(ws_front)
             # Ativa e exporta apenas essa aba
             ws_front.activate()
             ws_front.api.ExportAsFixedFormat(
@@ -1311,6 +1776,10 @@ def gerar_pdf_do_wb_aberto(wb, pasta_saida, nome_base, ignorar_abas=("nf",), ape
                 IgnorePrintAreas=False,
                 OpenAfterPublish=False
             )
+            try:
+                normalizar_pdf_final_para_a4(caminho_pdf)
+            except Exception:
+                pass
             print(f"ðŸ“„ PDF gerado (apenas FRONT VIGIA): {caminho_pdf}")
             return caminho_pdf
         else:
@@ -1325,6 +1794,7 @@ def gerar_pdf_do_wb_aberto(wb, pasta_saida, nome_base, ignorar_abas=("nf",), ape
             sh.api.Visible = False  # oculta NF
 
     ajustar_layout_todas_abas_visiveis_no_wb(wb, ignorar_abas=ignorar_abas)
+    compactar_layout_final_wb(wb, ignorar_abas=ignorar_abas)
 
     try:
         # 3) ativa uma aba visÃ­vel (Excel odeia export sem sheet ativa)
@@ -1345,6 +1815,11 @@ def gerar_pdf_do_wb_aberto(wb, pasta_saida, nome_base, ignorar_abas=("nf",), ape
             IgnorePrintAreas=False,
             OpenAfterPublish=False
         )
+
+        try:
+            normalizar_pdf_final_para_a4(caminho_pdf)
+        except Exception:
+            pass
 
         print(f"ðŸ“„ PDF gerado: {caminho_pdf}")
         return caminho_pdf

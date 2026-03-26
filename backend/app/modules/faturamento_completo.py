@@ -12,8 +12,8 @@ from num2words import num2words
 
 from backend.app.yuta_helpers import (
     ajustar_layout_todas_abas_visiveis_no_wb,
-    ajustar_layout_report_vigia,
     abrir_workbooks,
+    compactar_layout_final_ws,
     copiar_para_temp_xlwings,
     escrever_nf_faturamento_completo,
     extrair_identidade_navio,
@@ -22,6 +22,7 @@ from backend.app.yuta_helpers import (
     obter_modelo_word_cargonave,
     obter_pasta_faturamentos,
     openpyxl,
+    restaurar_layout_excel_para_visualizacao,
 )
 from .criar_pasta import CriarPasta
 from .email_rascunho import criar_rascunho_email_cliente
@@ -114,6 +115,9 @@ class FaturamentoCompleto:
                 apenas_front=apenas_front,
                 aplicar_layout=True,
             )
+
+            # Restaurar layout para visualizacao no Excel (desfaz FitToPages do PDF)
+            restaurar_layout_excel_para_visualizacao(self.wb2, ignorar_abas=("NF",))
 
             # SALVAR EXCEL (local â†’ rede)
             temp_excel = Path(tempfile.gettempdir()) / f"{nome_base}.xlsx"
@@ -1093,7 +1097,7 @@ class FaturamentoCompleto:
         except Exception:
             pass
 
-        ajustar_layout_report_vigia(ws_report)
+        compactar_layout_final_ws(ws_report)
 
         nome_pdf = f"REPORT VIGIA - DN {dn} - MV {navio}.pdf"
         caminho_pdf = pasta_navio / nome_pdf

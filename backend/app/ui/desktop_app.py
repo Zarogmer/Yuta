@@ -291,7 +291,10 @@ class DesktopApp(tk.Tk):
             pass
 
         try:
-            bg.destroy()
+            # Em alguns ambientes/instalações do Tk no Windows, destruir a árvore
+            # inteira desta tela de boas-vindas pode travar a inicialização.
+            # Como ela é usada apenas uma vez por execução, basta removê-la do layout.
+            bg.pack_forget()
         except Exception:
             pass
 

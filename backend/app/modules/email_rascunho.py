@@ -1,12 +1,16 @@
-﻿import pythoncom
+import pythoncom
 import win32com.client
 from pathlib import Path
 from datetime import datetime, date
 import unicodedata
 import re
+from html import escape
 
 from backend.app.config_manager import obter_caminho_assinatura_usuario
 
+
+EMAIL_FONT_FAMILY = "Aptos, Calibri, Arial, sans-serif"
+EMAIL_HTML_STYLE = f"font-family: {EMAIL_FONT_FAMILY}; font-size: 11pt; color: #000;"
 
 DEFAULT_ASSUNTO = "FATURAMENTO SANTOS {dn}/{ano} - M/V {navio}"
 ASSUNTO_SAO_SEBASTIAO = "FATURAMENTO {dn}/{ano2} - M/V {navio} - PORTO DE SÃO SEBASTIÃO"
@@ -20,12 +24,12 @@ Segue anexo faturamento do navio M/V {navio} em referência.
 Atenciosamente,
 """
 
-DEFAULT_CORPO_HTML = """<div style="font-family: Arial, sans-serif; font-size: 12pt; color: #000;">
+DEFAULT_CORPO_HTML = """<div style="{style}">
     <p>Prezados, bom dia!</p>
-    <p>Segue anexo faturamento do navio <strong>M/V {navio}</strong> em referência.</p>
+    <p>Segue anexo faturamento do navio <strong>M/V {{navio}}</strong> em referência.</p>
     <p>Atenciosamente,</p>
 </div>
-"""
+""".format(style=EMAIL_HTML_STYLE)
 
 CORPO_SAO_SEBASTIAO = """Prezados, bom dia!
 
@@ -34,61 +38,91 @@ Segue anexo faturamento do navio M/V {navio} em referência.
 Atenciosamente,
 """
 
-CORPO_SAO_SEBASTIAO_HTML = """<div style="font-family: Arial, sans-serif; font-size: 12pt; color: #000;">
+CORPO_SAO_SEBASTIAO_HTML = """<div style="{style}">
     <p>Prezados, bom dia!</p>
-    <p>Segue anexo faturamento do navio <strong>M/V {navio}</strong> em referência.</p>
+    <p>Segue anexo faturamento do navio <strong>M/V {{navio}}</strong> em referência.</p>
     <p>Atenciosamente,</p>
 </div>
-"""
+""".format(style=EMAIL_HTML_STYLE)
+
+CORPO_DE_ACORDO = (
+    "Prezados, {saudacao}!\n\n"
+    "Confirmo que o de acordo foi devidamente concedido.\n\n"
+    "Conforme procedimento padrão, haverá cobrança no valor de R$ 500,00.\n\n"
+    "Gentileza nos avisar assim que o navio deixar o Porto de Santos, para que possamos informar a Autoridade Portuaria sobre a inexistencia de operacao de carga.\n"
+    "Ressaltamos que o sistema da Supervia possui uma nova funcionalidade que obriga o Operador Portuário a informar, via sistema, quando o navio não realiza operações durante sua estadia no porto.\n\n"
+    "A ausência dessa informação gera automaticamente um Auto de Inspeção, bem como as respectivas penalidades ao Operador Portuário.\n\n"
+    "Certo de sua colaboração e entendimento, agradecemos a parceria.\n\n"
+    "Atenciosamente,\n"
+)
+
+CORPO_DE_ACORDO_HTML = """<div style="{style}">
+    <p>Prezados, {{saudacao}}!</p>
+    <p>Confirmo que o de acordo foi devidamente concedido.</p>
+    <p>Conforme procedimento padrão, haverá cobrança no valor de <strong>R$ 500,00</strong>.</p>
+    <p>Gentileza nos avisar assim que o navio deixar o Porto de Santos, para que possamos informar a Autoridade Portuária sobre a inexistência de operação de carga.</p>
+    <p>Ressaltamos que o sistema da Supervia possui uma nova funcionalidade que obriga o Operador Portuário a informar, via sistema, quando o navio não realiza operações durante sua estadia no porto.</p>
+    <p>A ausência dessa informação gera automaticamente um Auto de Inspeção, bem como as respectivas penalidades ao Operador Portuário.</p>
+    <p>Certo de sua colaboração e entendimento, agradecemos a parceria.</p>
+    <p>Atenciosamente,</p>
+</div>
+""".format(style=EMAIL_HTML_STYLE)
+
+TIPOS_EMAIL = {
+    "DE_ACORDO": {
+        "corpo": CORPO_DE_ACORDO,
+        "corpo_html": CORPO_DE_ACORDO_HTML,
+    },
+}
 
 CORPO_CARGONAVE = """Prezados, {saudacao}!
 
-Gentileza nos enviar dados para emissÃ£o de nota fiscal do navio {navio} em referÃªncia.
+Gentileza nos enviar dados para emissão de nota fiscal do navio {navio} em referência.
 
 Solicitamos remessa na conta corrente abaixo no valor de {adiantamento_fmt} conforme acordo.
 
-Dados para depÃ³sito:
+Dados para depósito:
 
 Banco ItaÃº
 
-AgÃªncia: 0447
+Agência: 0447
 
 Conta Corrente: 99807-1
 
 Pix: 24.845.408/0001-22
 
-Desde jÃ¡ muito obrigado.
+Desde já muito obrigado.
 
 Atenciosamente,
 """
 
-CORPO_CARGONAVE_HTML = """<div style="font-family: Arial, sans-serif; font-size: 12pt; color: #000;">
-    <p>Prezados, {saudacao}!</p>
-    <p>Gentileza nos enviar dados para emissÃ£o de nota fiscal do navio {navio} em referÃªncia.</p>
-    <p>Solicitamos remessa na conta corrente abaixo no valor de <strong>{adiantamento_fmt}</strong> conforme acordo.</p>
+CORPO_CARGONAVE_HTML = """<div style="{style}">
+    <p>Prezados, {{saudacao}}!</p>
+    <p>Gentileza nos enviar dados para emissão de nota fiscal do navio {{navio}} em referência.</p>
+    <p>Solicitamos remessa na conta corrente abaixo no valor de <strong>{{adiantamento_fmt}}</strong> conforme acordo.</p>
     <table style="border: 1px solid #000; border-collapse: collapse; margin: 6px 0 10px;" cellpadding="6" cellspacing="0">
         <tr>
             <td style="padding: 6px 10px;">
-                <div><strong>Dados para depÃ³sito:</strong></div>
+                <div><strong>Dados para depósito:</strong></div>
                 <div>Banco ItaÃº</div>
-                <div>AgÃªncia: 0447</div>
+                <div>Agência: 0447</div>
                 <div>Conta Corrente: 99807-1</div>
                 <div>Pix: 24.845.408/0001-22</div>
             </td>
         </tr>
     </table>
-    <p>Desde jÃ¡ muito obrigado.</p>
+    <p>Desde já muito obrigado.</p>
     <p>Atenciosamente,</p>
 </div>
-"""
+""".format(style=EMAIL_HTML_STYLE)
 
 CORPO_ROCHAMAR = """Prezados, {saudacao}!
 
-Solicitamos o nÃºmero da OC do navio em referÃªncia e seguem valores da fatura abaixo:
+Solicitamos o número da OC do navio em referência e seguem valores da fatura abaixo:
 
 M/V {navio}
 
-AtracaÃ§Ã£o: {atracacao_ini} a {atracacao_fim}
+Atracação: {atracacao_ini} a {atracacao_fim}
 
 Despesas OGMO: {costs_fmt}
 
@@ -97,16 +131,16 @@ Taxa Administrativa: {adm_fmt}
 Atenciosamente,
 """
 
-CORPO_ROCHAMAR_HTML = """<div style="font-family: Arial, sans-serif; font-size: 12pt; color: #000;">
-    <p>Prezados, {saudacao}!</p>
-    <p>Solicitamos o nÃºmero da OC do navio em referÃªncia e seguem valores da fatura abaixo:</p>
-    <p><strong>M/V {navio}</strong></p>
-    <p>AtracaÃ§Ã£o: {atracacao_ini} a {atracacao_fim}</p>
-    <p>Despesas OGMO: {costs_fmt}</p>
-    <p>Taxa Administrativa: {adm_fmt}</p>
+CORPO_ROCHAMAR_HTML = """<div style="{style}">
+    <p>Prezados, {{saudacao}}!</p>
+    <p>Solicitamos o número da OC do navio em referência e seguem valores da fatura abaixo:</p>
+    <p><strong>M/V {{navio}}</strong></p>
+    <p>Atracação: {{atracacao_ini}} a {{atracacao_fim}}</p>
+    <p>Despesas OGMO: {{costs_fmt}}</p>
+    <p>Taxa Administrativa: {{adm_fmt}}</p>
     <p>Atenciosamente,</p>
 </div>
-"""
+""".format(style=EMAIL_HTML_STYLE)
 
 # Edite aqui para personalizar por cliente.
 CLIENTES_EMAIL = {
@@ -312,7 +346,7 @@ def _cid_assinatura(usuario_nome: str | None) -> str:
 
 def _inserir_assinatura_no_final(corpo_html: str, cid: str) -> str:
     bloco = (
-        f"<p style=\"margin:4px 0 0 0;\">"
+        f"<p style=\"margin:12px 0 0 0;\">"
         f"<img src=\"cid:{cid}\" width=\"420\" style=\"width:420px;max-width:420px;height:auto;display:block;\">"
         "</p>"
     )
@@ -389,13 +423,39 @@ def _corrigir_mojibake_texto(texto: str | None) -> str:
         "emissÃ£o": "emissão",
         "jÃ¡": "já",
         "AtracaÃ§Ã£o": "Atracação",
+        "ItaÃº": "Itaú",
         "SÃƒO": "SÃO",
         "SEBASTIÃƒO": "SEBASTIÃO",
+        "Portuaria": "Portuária",
+        "Portuario": "Portuário",
+        "operacao": "operação",
+        "operacoes": "operações",
+        "inexistencia": "inexistência",
+        "ausencia": "ausência",
+        "informacao": "informação",
+        "Inspecao": "Inspeção",
+        "colaboracao": "colaboração",
+        "padrao": "padrão",
+        "havera": "haverá",
+        "cobranca": "cobrança",
     }
     for antigo, novo in trocas.items():
         s = s.replace(antigo, novo)
 
     return s
+
+
+def _converter_texto_para_html(texto: str) -> str:
+    paragrafos = [p.strip() for p in str(texto or "").split("\n\n") if p.strip()]
+    if not paragrafos:
+        return f"<div style=\"{EMAIL_HTML_STYLE}\"></div>"
+
+    html_paragrafos = []
+    for paragrafo in paragrafos:
+        conteudo = escape(paragrafo).replace("\n", "<br>")
+        html_paragrafos.append(f"<p>{conteudo}</p>")
+
+    return f"<div style=\"{EMAIL_HTML_STYLE}\">{''.join(html_paragrafos)}</div>"
 
 
 def criar_rascunho_email_cliente(
@@ -404,6 +464,7 @@ def criar_rascunho_email_cliente(
     assunto: str | None = None,
     corpo: str | None = None,
     corpo_html: str | None = None,
+    tipo_email: str | None = None,
     abrir_rascunho: bool = False,
     dn: str | None = None,
     navio: str | None = None,
@@ -419,6 +480,9 @@ def criar_rascunho_email_cliente(
     Cria um rascunho no Outlook com base no nome do cliente.
     Permite sobrescrever assunto e corpo para casos especiais.
     """
+    tipo_email_norm = " ".join(str(tipo_email or "").upper().split()).replace(" ", "_")
+    template_tipo = TIPOS_EMAIL.get(tipo_email_norm, {})
+
     nome_cliente_norm = normalizar_nome_cliente(nome_cliente)
     config = CLIENTES_EMAIL.get(nome_cliente_norm)
     if not config:
@@ -445,12 +509,18 @@ def criar_rascunho_email_cliente(
     assunto_final = (assunto or config.get("assunto") or DEFAULT_ASSUNTO).format(
         **contexto
     )
-    corpo_final = (corpo or config.get("corpo") or DEFAULT_CORPO).format(
-        **contexto
-    )
-    corpo_html_final = (
-        corpo_html or config.get("corpo_html") or DEFAULT_CORPO_HTML
-    ).format(**contexto)
+    corpo_template = corpo or template_tipo.get("corpo") or config.get("corpo") or DEFAULT_CORPO
+    corpo_html_template = corpo_html
+    if corpo_html_template is None:
+        corpo_html_template = template_tipo.get("corpo_html")
+    if corpo_html_template is None:
+        corpo_html_template = config.get("corpo_html")
+
+    corpo_final = corpo_template.format(**contexto)
+    if corpo_html_template is not None:
+        corpo_html_final = corpo_html_template.format(**contexto)
+    else:
+        corpo_html_final = _converter_texto_para_html(corpo_final)
 
     assunto_final = _corrigir_mojibake_texto(assunto_final)
     corpo_final = _corrigir_mojibake_texto(corpo_final)

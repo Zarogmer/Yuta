@@ -2,6 +2,7 @@
 from tempfile import gettempdir
 
 from backend.app.yuta_helpers import (
+    aplicar_layout_pdf_especifico,
     ajustar_layout_todas_abas_visiveis_no_wb,
     abrir_workbooks_de_acordo,
     escrever_de_acordo_nf,
@@ -149,7 +150,7 @@ class FaturamentoDeAcordo:
             if preview:
                 preview_pdf = self._export_preview_pdf(wb, nome_base)
                 return {
-                    "text": "",
+                    "text": self._build_preview_text(nome_base, dn, nome_navio, data_extenso),
                     "preview_pdf": str(preview_pdf) if preview_pdf else None,
                     "selection": {"pasta_navio": str(pasta_navio)},
                 }
@@ -170,7 +171,8 @@ class FaturamentoDeAcordo:
                 caminho_excel=caminho_excel,
                 pasta_saida=pasta_navio,
                 nome_base=nome_base,
-                ws=ws_front
+                ws=ws_front,
+                tipo_layout="DE ACORDO",
             )
             print(f"ðŸ“‘ PDF FRONT salvo em: {caminho_pdf}")
 
@@ -182,6 +184,7 @@ class FaturamentoDeAcordo:
                     anexos=anexos,
                     dn=str(dn),
                     navio=nome_navio,
+                    tipo_email="DE_ACORDO",
                     usuario_nome=self.usuario_nome,
                 )
                 print("âœ… Rascunho do Outlook criado com anexos.")
@@ -271,7 +274,16 @@ class FaturamentoDeAcordo:
                 sh.api.Visible = False
 
         try:
-            ajustar_layout_todas_abas_visiveis_no_wb(wb, ignorar_abas=("NF",))
+            aba_principal = None
+            for sh in wb.sheets:
+                if bool(sh.api.Visible) and sh.name.strip().upper() != "NF":
+                    aba_principal = sh
+                    break
+
+            if aba_principal is not None:
+                aplicar_layout_pdf_especifico(aba_principal, tipo_layout="DE ACORDO")
+            else:
+                ajustar_layout_todas_abas_visiveis_no_wb(wb, ignorar_abas=("NF",))
 
             # Excel exige uma aba visivel ativa antes da exportacao.
             for sh in wb.sheets:

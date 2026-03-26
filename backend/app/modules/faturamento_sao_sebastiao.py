@@ -313,6 +313,37 @@ class FaturamentoSaoSebastiao:
         """Nomes ordenados (string) - Ãºtil se vocÃª quiser logar."""
         return [p.name for p in self._ordenar_pdfs_ogmo()]
 
+    def _coletar_periodos_operacionais(self, texto_busca: str) -> list[tuple[str, str]]:
+        """
+        Fallback para layouts em que o OCR perde "PerÃ­odo Inicial/Final",
+        mas mantÃ©m a linha operacional com data e horÃ¡rio.
+        """
+        if not texto_busca:
+            return []
+
+        rx_data = re.compile(r"\b(\d{1,2}/\d{1,2}/\d{4})\b")
+        rx_h = re.compile(r"\b(\d{1,2})\s*[xÃ—h\-:]\s*(\d{1,2})\b", re.I)
+        encontrados: list[tuple[str, str]] = []
+
+        for linha in texto_busca.splitlines():
+            linha_limpa = linha.strip()
+            if not linha_limpa:
+                continue
+
+            data_m = rx_data.search(linha_limpa)
+            hora_m = rx_h.search(linha_limpa)
+            if not data_m or not hora_m:
+                continue
+
+            linha_norm = self._normalizar(linha_limpa)
+            if not any(chave in linha_norm for chave in ("vigil", "opera", "periodo", "simples")):
+                continue
+
+            periodo = f"{int(hora_m.group(1)) % 24:02d}x{int(hora_m.group(2)) % 24:02d}"
+            encontrados.append((data_m.group(1), periodo))
+
+        return encontrados
+
 
     # ==================================================
     # EXTRAÃ‡ÃƒO - DATA (tolerante a OCR) por PDF (case-insensitive)
@@ -370,6 +401,14 @@ class FaturamentoSaoSebastiao:
 
         data_ini = achar_data(rx_ini)
         data_fim = achar_data(rx_fim)
+
+        if not data_ini or not data_fim:
+            periodos_operacionais = self._coletar_periodos_operacionais(texto_busca)
+            if periodos_operacionais:
+                if not data_ini:
+                    data_ini = periodos_operacionais[0][0]
+                if not data_fim:
+                    data_fim = periodos_operacionais[-1][0]
 
         if not data_ini or not data_fim:
             raise RuntimeError(f"PerÃ­odo (datas) nÃ£o encontrado. ini={data_ini} fim={data_fim}")
@@ -451,6 +490,14 @@ class FaturamentoSaoSebastiao:
             p_fim = achar_horario_global(
                 re.compile(r"(?:periodo\s*)?fina(?:l|I|1)?[^\d\n]{0,25}(\d{1,2})\s*[xÃ—h\-:]\s*(\d{1,2})", re.I)
             )
+
+        if not p_ini or not p_fim:
+            periodos_operacionais = self._coletar_periodos_operacionais(texto_busca)
+            if periodos_operacionais:
+                if not p_ini:
+                    p_ini = periodos_operacionais[0][1]
+                if not p_fim:
+                    p_fim = periodos_operacionais[-1][1]
 
         if not p_ini or not p_fim:
             raise RuntimeError(f"PerÃ­odo (horÃ¡rios) nÃ£o encontrado. ini={p_ini} fim={p_fim}")
@@ -725,13 +772,21 @@ class FaturamentoSaoSebastiao:
 
             for i, linha in enumerate(linhas):
                 if re.search(r"INSS\s*\(\s*RAT", linha, re.IGNORECASE):
+                    linha_sem_percentual = re.sub(r"\d+(?:[.,]\d+)?\s*%", " ", linha)
+                    vals_mesma_linha = re.findall(padrao_br, linha_sem_percentual)
+                    if vals_mesma_linha:
+                        total += self._br_or_us_to_float(vals_mesma_linha[-1])
+                        continue
 
                     trecho = [linha]
                     for j in range(i + 1, min(len(linhas), i + 1 + lookahead)):
                         ln = linhas[j]
 
                         # para no prÃ³ximo INSS que nÃ£o seja RAT (pra nÃ£o cair no Terceiros)
-                        if re.search(r"INSS\s*\(", ln, re.IGNORECASE) and not re.search(r"INSS\s*\(\s*RAT", ln, re.IGNORECASE):
+                        if (
+                            (re.search(r"[TI]?NSS\s*\(", ln, re.IGNORECASE) and not re.search(r"INSS\s*\(\s*RAT", ln, re.IGNORECASE))
+                            or re.search(r"Subtotal|Taxas\s+Ban|Total\s+a\s+ser\s+recolhido|Observa", ln, re.IGNORECASE)
+                        ):
                             break
 
                         trecho.append(ln)
@@ -752,6 +807,33 @@ class FaturamentoSaoSebastiao:
                     if vals:
                         total += self._br_or_us_to_float(vals[-1])
                         continue
+
+        return total
+
+    def _somar_taxas_bancarias(self, paginas_validas: set[int] | None = None) -> float:
+        total = 0.0
+        padrao_valor = r"\d{1,3}(?:\.\d{3})*,\d{2}|\b\d+\.\d{2}\b(?!\.)"
+
+        for item in self.paginas_texto:
+            if paginas_validas is not None and item.get("page") not in paginas_validas:
+                continue
+
+            linhas = item["texto"].splitlines()
+            for i, linha in enumerate(linhas):
+                linha_norm = self._normalizar(linha)
+                if "taxas" not in linha_norm or "ban" not in linha_norm:
+                    continue
+
+                vals = re.findall(padrao_valor, linha)
+                if vals:
+                    total += self._br_or_us_to_float(vals[-1])
+                    continue
+
+                if i + 1 < len(linhas):
+                    prox = linhas[i + 1]
+                    vals = re.findall(padrao_valor, prox)
+                    if vals:
+                        total += self._br_or_us_to_float(vals[0])
 
         return total
 
@@ -867,7 +949,7 @@ class FaturamentoSaoSebastiao:
 
             "Encargos Administrativos": self._somar_encargos_adm(paginas_validas=PAG_FIN),
             "INSS (RAT Ajustado)": self._somar_rat_ajustado(paginas_validas=PAG_FIN, lookahead=8),
-            "Taxas BancÃ¡rias": self._somar_valor_item(r"Taxas\s+Banc", paginas_validas=PAG_FIN, pick="last"),
+            "Taxas BancÃ¡rias": self._somar_taxas_bancarias(paginas_validas=PAG_FIN),
             "Horas Extras": self._somar_valor_item(r"Horas?\s+Extras?", paginas_validas=PAG_HE, pick="last"),
         }
 
@@ -1444,15 +1526,7 @@ class FaturamentoSaoSebastiao:
         if linha_ref is None:
             return 0.0
 
-        # escolhe coluna base
-        if not dom_fer and not noite:
-            col = "N"
-        elif not dom_fer and noite:
-            col = "O"
-        elif dom_fer and not noite:
-            col = "P"
-        else:
-            col = "Q"
+        col = self._coluna_tarifa_por_regra(dom_fer, noite)
 
         cell = f"{col}{linha_ref}"
         val = ws_report.range(cell).value
@@ -1835,24 +1909,28 @@ class FaturamentoSaoSebastiao:
 
 
     # --------------------------------------------------
-    # 4) pega a tarifa ATRACADO pela regra:
-    #    - Seg-SÃ¡b dia:   N9
-    #    - Seg-SÃ¡b noite: O9
-    #    - Dom/Feriado dia:   P9
-    #    - Dom/Feriado noite: Q9
+    # 4) pega a tarifa da tabela visivel do REPORT VIGIA:
+    #    - ATRACADO: linha 9
+    #    - AO LARGO/FUNDEIO: linha 16
+    #    - Seg-Sáb dia: Q
+    #    - Seg-Sáb noite: S
+    #    - Dom/Feriado dia: U
+    #    - Dom/Feriado noite: W
     # --------------------------------------------------
+    def _coluna_tarifa_por_regra(self, dom_fer: bool, noite: bool) -> str:
+        if not dom_fer and not noite:
+            return "Q"
+        if not dom_fer and noite:
+            return "S"
+        if dom_fer and not noite:
+            return "U"
+        return "W"
+
     def _tarifa_atracado(self, ws_report, d: date, periodo: str) -> float:
         dom_fer = self._is_domingo_ou_feriado(d)
         noite = self._is_noite_por_periodo(periodo)
 
-        if not dom_fer and not noite:
-            cell = "N9"  # seg-sab dia
-        elif not dom_fer and noite:
-            cell = "O9"  # seg-sab noite
-        elif dom_fer and not noite:
-            cell = "P9"  # dom/fer dia
-        else:
-            cell = "Q9"  # dom/fer noite
+        cell = f"{self._coluna_tarifa_por_regra(dom_fer, noite)}9"
 
         val = ws_report.range(cell).value
         if val in (None, ""):
@@ -1868,9 +1946,9 @@ class FaturamentoSaoSebastiao:
         print(f"⚠️ Tarifa ATRACADO invalida em {cell}: {val!r}. Assumindo 0,00")
         return 0.0
 
-    def _tarifas_da_linha(self, ws_report, linha_ref: int, col_ini: int = 14, col_fim: int = 30) -> list[float]:
+    def _tarifas_da_linha(self, ws_report, linha_ref: int, col_ini: int = 17, col_fim: int = 23) -> list[float]:
         """
-        Extrai valores monetarios da linha de tarifa (N..AD por padrao).
+        Extrai valores monetarios da linha de tarifa (Q..W por padrao).
         Usado quando a celula base vem com texto (ex.: 'CUSTO').
         """
         valores: list[float] = []
@@ -1947,14 +2025,7 @@ class FaturamentoSaoSebastiao:
             dom_fer = self._is_domingo_ou_feriado(d)
             noite = self._is_noite_por_periodo(p_bucket)
 
-            if not dom_fer and not noite:
-                cell = f"N{linha_ref}"
-            elif not dom_fer and noite:
-                cell = f"O{linha_ref}"
-            elif dom_fer and not noite:
-                cell = f"P{linha_ref}"
-            else:
-                cell = f"Q{linha_ref}"
+            cell = f"{self._coluna_tarifa_por_regra(dom_fer, noite)}{linha_ref}"
 
             val = ws_report.range(cell).value
             if val in (None, ""):
