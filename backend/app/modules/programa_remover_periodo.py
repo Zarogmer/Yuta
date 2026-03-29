@@ -1,4 +1,6 @@
-﻿from datetime import date, datetime
+import shutil
+import time
+from datetime import date, datetime
 from pathlib import Path
 from tempfile import gettempdir
 
@@ -11,6 +13,9 @@ class ProgramaRemoverPeriodo:
     def __init__(self, debug=False):
         self.debug = debug
         self.caminho_navio = None
+        self._caminho_navio_destino = None
+        self._caminho_navio_temp = None
+        self._save_copy_path = None
         self.app = None
         self.wb = None
         self.wb_navio = None
@@ -33,14 +38,55 @@ class ProgramaRemoverPeriodo:
     def abrir_arquivo_navio(self, caminho=None):
         caminho = caminho or self.caminho_navio or selecionar_arquivo_navio()
         if not caminho:
-            return
+            raise FileNotFoundError("Arquivo do NAVIO nao selecionado")
 
-        self.caminho_navio = caminho
+        caminho_destino = Path(caminho).resolve()
+        self._caminho_navio_destino = str(caminho_destino)
+        self._caminho_navio_temp = None
+        self.caminho_navio = str(caminho_destino)
 
         self.app = xw.App(visible=False, add_book=False)
-        self.wb_navio = self.app.books.open(caminho)
+        self.wb_navio = self.app.books.open(str(caminho_destino))
+
+        # Se abrir em somente leitura (rede/OneDrive), usa copia local de trabalho.
+        if bool(getattr(self.wb_navio.api, "ReadOnly", False)):
+            print("Arquivo abriu em SOMENTE LEITURA. Usando copia local temporaria para edicao.")
+            try:
+                self.wb_navio.close()
+            except Exception:
+                pass
+
+            temp_name = f"remover_ponto_work_{caminho_destino.stem}_{int(time.time() * 1000)}.xlsx"
+            caminho_temp = Path(gettempdir()) / temp_name
+            if caminho_temp.exists():
+                caminho_temp.unlink()
+            shutil.copy2(caminho_destino, caminho_temp)
+
+            self.wb_navio = self.app.books.open(str(caminho_temp))
+            self._caminho_navio_temp = str(caminho_temp)
+            self.caminho_navio = str(caminho_temp)
+
         self.wb = self.wb_navio
-        self.ws = self.wb.sheets[0]
+        self.ws = self._selecionar_worksheet_dados(self.wb)
+
+    def _selecionar_worksheet_dados(self, wb):
+        # xlWorksheet = -4167
+        for sh in wb.sheets:
+            try:
+                if int(sh.api.Type) == -4167:
+                    _ = sh.range("A1").value
+                    return sh
+            except Exception:
+                continue
+
+        for sh in wb.sheets:
+            try:
+                _ = sh.range("A1").value
+                return sh
+            except Exception:
+                continue
+
+        raise RuntimeError("Nenhuma aba de planilha valida encontrada no arquivo NAVIO.")
 
     # ---------------------------
     # Utilidades
@@ -63,11 +109,29 @@ class ProgramaRemoverPeriodo:
             return True
         return False
 
-    def obter_nome_navio(self):
-        return self.ws.range("A2").value
+    def _to_float(self, valor):
+        if isinstance(valor, (int, float)):
+            return float(valor)
+        if isinstance(valor, str):
+            texto = valor.strip().replace(" ", "")
+            if not texto:
+                return None
+            if "," in texto and "." in texto:
+                texto = texto.replace(".", "").replace(",", ".")
+            elif "," in texto:
+                texto = texto.replace(",", ".")
+            try:
+                return float(texto)
+            except Exception:
+                return None
+        return None
 
-
-
+    def _limite_scan_planilha(self):
+        try:
+            ultima = self.ws.range("B" + str(self.ws.cells.last_cell.row)).end("up").row
+            return min(max(ultima + 10, 20), 200)
+        except Exception:
+            return 200
 
     # ---------------------------
     # Datas
@@ -86,29 +150,29 @@ class ProgramaRemoverPeriodo:
         self.datas = list(dict.fromkeys(datas))
 
     def escolher_data(self):
-        print("\nDatas disponÃ­veis:")
+        print("\nDatas disponiveis:")
         for i, d in enumerate(self.datas, 1):
             print(f"{i} - {d}")
         while True:
             try:
                 return self.datas[int(input("Escolha a data: ")) - 1]
-            except:
-                print("OpÃ§Ã£o invÃ¡lida.")
+            except Exception:
+                print("Opcao invalida.")
 
     def escolher_periodo(self):
-        print("\nHorÃ¡rio:")
+        print("\nHorario:")
         print("1 = 06h | 2 = 12h | 3 = 18h | 4 = 00h")
         while True:
-            op = input("OpÃ§Ã£o: ").strip()
+            op = input("Opcao: ").strip()
             if op in self.PERIODOS_MENU:
                 return self.PERIODOS_MENU[op]
 
     # ---------------------------
-    # LocalizaÃ§Ã£o
+    # Localizacao
     # ---------------------------
 
     def encontrar_linha_data(self, data_str):
-        ultima = self.ws.range("B" + str(self.ws.cells.last_cell.row)).end("up").row
+        ultima = self._limite_scan_planilha()
         for i in range(1, ultima + 1):
             v = self.ws.range(f"B{i}").value
             if isinstance(v, (datetime, date)) and v.strftime("%d/%m/%Y") == data_str:
@@ -119,7 +183,8 @@ class ProgramaRemoverPeriodo:
 
     def encontrar_total_data(self, linha_data):
         i = linha_data + 1
-        while True:
+        limite = linha_data + 30
+        while i <= limite:
             valor_c = self.ws.range(f"C{i}").value
             valor_a = self.ws.range(f"A{i}").value
 
@@ -130,28 +195,22 @@ class ProgramaRemoverPeriodo:
                 return i
 
             i += 1
+        return None
 
     def encontrar_linha_total_geral(self):
-        ultima = self.ws.cells.last_cell.row
+        ultima = self._limite_scan_planilha()
         for i in range(1, ultima + 1):
             v = self.ws.range(f"A{i}").value
             if isinstance(v, str) and self.normalizar_texto(v) == "totalgeral":
                 return i
         return None
 
-    # ---------------------------
-    # Encontrar perÃ­odo EXATO
-    # ---------------------------
-
-
-
-
     def encontrar_linha_periodo(self, data, periodo):
         linha_data = self.encontrar_linha_data(data)
         if not linha_data:
             return None
 
-        # ðŸ”´ REGRA ESPECIAL PARA 00h
+        # REGRA ESPECIAL PARA 00h: pode estar na linha acima da data
         if periodo == "00h":
             linha_acima = linha_data - 1
             if linha_acima > 0:
@@ -161,7 +220,7 @@ class ProgramaRemoverPeriodo:
                     if p == "00h":
                         return linha_acima
 
-        # ðŸ”½ Procura normal abaixo da data
+        # Procura normal abaixo da data
         i = linha_data + 1
         while True:
             valor_a = self.ws.range(f"A{i}").value
@@ -180,59 +239,136 @@ class ProgramaRemoverPeriodo:
 
             i += 1
 
+    # ---------------------------
+    # Contar periodos de um dia
+    # ---------------------------
+
+    def _contar_periodos_dia(self, linha_data, linha_total_dia):
+        """Conta quantos periodos (06h, 12h, 18h, 00h) existem entre linha_data e linha_total_dia."""
+        count = 0
+        for i in range(linha_data, linha_total_dia):
+            valor_c = self.ws.range(f"C{i}").value
+            if isinstance(valor_c, str) and self.normalizar_periodo(valor_c):
+                count += 1
+        return count
 
     # ---------------------------
-    # SubtraÃ§Ãµes
+    # Recalculo (do zero, nao por subtracao)
     # ---------------------------
 
-    def subtrair_total_dia(self, linha_origem, linha_total_dia):
-        ultima_col = self.ws.range("A1").expand("right").last_cell.column
-        for col in range(3, ultima_col + 1):
-            v = self.ws.range((linha_origem, col)).value
-            if isinstance(v, (int, float)):
-                celula = self.ws.range((linha_total_dia, col))
-                celula.value = (celula.value or 0) - v
-
-    def subtrair_total_geral(self, linha_origem):
-        linha_total_geral = self.encontrar_linha_total_geral()
-        if not linha_total_geral:
+    def recalcular_total_do_dia(self, linha_data):
+        linha_total_dia = self.encontrar_total_data(linha_data)
+        if not linha_total_dia:
             return
 
         ultima_col = self.ws.range("A1").expand("right").last_cell.column
         for col in range(4, ultima_col + 1):
-            v = self.ws.range((linha_origem, col)).value
-            if isinstance(v, (int, float)):
-                celula = self.ws.range((linha_total_geral, col))
-                celula.value = (celula.value or 0) - v
+            soma_col = 0.0
+            for i in range(linha_data, linha_total_dia):
+                valor_c = self.ws.range(f"C{i}").value
+                if not isinstance(valor_c, str):
+                    continue
+                periodo = self.normalizar_periodo(valor_c)
+                if not periodo:
+                    continue
+                v = self._to_float(self.ws.range((i, col)).value)
+                if v is not None:
+                    soma_col += v
+            self.ws.range((linha_total_dia, col)).value = soma_col
+
+        print(f"Total do dia recalculado na linha {linha_total_dia}")
+
+    def recalcular_totais_rodape(self):
+        ultima_linha = self._limite_scan_planilha()
+        ultima_col = self.ws.range("A1").expand("right").last_cell.column
+
+        # Soma todas as linhas de periodos reais (06h, 12h, 18h, 00h)
+        soma = {col: 0.0 for col in range(4, ultima_col + 1)}
+        for i in range(1, ultima_linha + 1):
+            valor_c = self.ws.range(f"C{i}").value
+            if not isinstance(valor_c, str):
+                continue
+            periodo = self.normalizar_periodo(valor_c)
+            if not periodo:
+                continue
+            for col in range(4, ultima_col + 1):
+                v = self._to_float(self.ws.range((i, col)).value)
+                if v is not None:
+                    soma[col] += v
+
+        # Atualiza linhas de rodape finais (Total Geral e Total rodape)
+        for i in range(1, ultima_linha + 1):
+            a = self.ws.range(f"A{i}").value
+            b = self.ws.range(f"B{i}").value
+            c = self.ws.range(f"C{i}").value
+
+            eh_total_geral = isinstance(a, str) and self.normalizar_texto(a) == "totalgeral"
+            eh_total_rodape = (
+                isinstance(b, str)
+                and self.normalizar_texto(b) == "total"
+                and not (isinstance(c, str) and self.normalizar_texto(c) == "total")
+            )
+
+            if not (eh_total_geral or eh_total_rodape):
+                continue
+
+            for col in range(4, ultima_col + 1):
+                self.ws.range((i, col)).value = soma[col]
+
+        print("Totais de rodape (Total / Total Geral) recalculados")
 
     # ---------------------------
-    # Remover perÃ­odo
+    # Remover periodo
     # ---------------------------
 
     def remover_periodo(self, data, periodo):
-        if self.is_dia_bloqueado(data):
-            print(f"â›” {data} Ã© domingo ou feriado â€” nenhuma aÃ§Ã£o executada")
-            return
-
         linha = self.encontrar_linha_periodo(data, periodo)
         if not linha:
-            print(f"â„¹ PerÃ­odo {periodo} nÃ£o existe em {data} â€” nada a remover")
-            return
+            return {
+                "changed": False,
+                "message": f"Periodo {periodo} nao existe em {data} - nada a remover.",
+            }
 
         linha_data = self.encontrar_linha_data(data)
         linha_total_dia = self.encontrar_total_data(linha_data)
 
-        print(f"\nðŸ—‘ Removendo perÃ­odo {periodo} â€” Data {data}")
+        qtd_periodos = self._contar_periodos_dia(linha_data, linha_total_dia) if linha_total_dia else 1
 
-        if linha_total_dia:
-            self.subtrair_total_dia(linha, linha_total_dia)
+        print(f"\nRemovendo periodo {periodo} - Data {data}")
 
-        self.subtrair_total_geral(linha)
+        if qtd_periodos <= 1:
+            # Ultimo periodo do dia: remover bloco inteiro (data + periodo + total)
+            # Determina range de linhas a deletar
+            primeira_linha = linha_data
+            # 00h pode estar acima da data
+            if linha > 0 and linha < linha_data:
+                primeira_linha = linha
+            ultima_linha_bloco = linha_total_dia if linha_total_dia else linha
 
-        self.ws.api.Rows(linha).Delete()
+            qtd_linhas = ultima_linha_bloco - primeira_linha + 1
+            self.ws.api.Rows(f"{primeira_linha}:{ultima_linha_bloco}").Delete()
+            print(f"Dia inteiro removido ({qtd_linhas} linhas: {primeira_linha} a {ultima_linha_bloco})")
+        else:
+            # Mais de 1 periodo: remover apenas a linha do periodo
+            self.ws.api.Rows(linha).Delete()
+            print(f"Linha {linha} removida")
 
-        print("➡️ Linha removida e totais ajustados")
+            # Recalcular total do dia
+            # Re-encontrar linha_data pois pode ter mudado se linha < linha_data
+            linha_data_atual = self.encontrar_linha_data(data)
+            if linha_data_atual:
+                self.recalcular_total_do_dia(linha_data_atual)
 
+        # Recalcular Total e Total Geral do rodape
+        self.recalcular_totais_rodape()
+
+        # Recarregar datas
+        self.carregar_datas()
+
+        return {
+            "changed": True,
+            "message": f"Periodo {periodo} de {data} removido com sucesso.",
+        }
 
     # ---------------------------
     # Preview
@@ -278,7 +414,7 @@ class ProgramaRemoverPeriodo:
             return None
 
         nome_base = Path(str(self.caminho_navio or "navio")).stem
-        caminho_pdf = Path(gettempdir()) / f"preview_desfazer_ponto_{nome_base}.pdf"
+        caminho_pdf = Path(gettempdir()) / f"preview_remover_ponto_{nome_base}.pdf"
         if caminho_pdf.exists():
             caminho_pdf.unlink()
 
@@ -331,10 +467,12 @@ class ProgramaRemoverPeriodo:
             self.abrir_arquivo_navio(caminho=caminho_navio)
             self.carregar_datas()
 
+            caminho_rede = str(self._caminho_navio_destino or caminho_navio)
+
             linhas = [
                 "PRE-VISUALIZACAO",
                 "Processo: Remover Ponto",
-                f"Arquivo: {Path(caminho_navio).name}",
+                f"Arquivo: {Path(caminho_rede).name}",
                 f"Total de datas no arquivo: {len(self.datas)}",
             ]
 
@@ -351,10 +489,7 @@ class ProgramaRemoverPeriodo:
                 elif not self.encontrar_linha_periodo(data_selecionada, periodo):
                     linhas.append("Status: periodo nao existe nesta data (nada a remover)")
                 else:
-                    if self.is_dia_bloqueado(data_selecionada):
-                        linhas.append("Regra: domingo/feriado - remocao bloqueada.")
-                    else:
-                        linhas.append("Status: periodo encontrado, pronto para remover")
+                    linhas.append("Status: periodo encontrado, pronto para remover")
             else:
                 linhas.append("Status: selecione data e periodo ao clicar em 'Executar'.")
 
@@ -362,7 +497,7 @@ class ProgramaRemoverPeriodo:
                 "text": "\n".join(linhas),
                 "preview_pdf": self._export_preview_pdf(),
                 "selection": {
-                    "caminho_navio": caminho_navio,
+                    "caminho_navio": caminho_rede,
                     "datas": list(self.datas or []),
                 },
             }
@@ -373,12 +508,13 @@ class ProgramaRemoverPeriodo:
                 wb_cliente=self.wb_cliente,
             )
 
-
     # ---------------------------
-    # ExecuÃ§Ã£o
+    # Execucao
     # ---------------------------
 
     def executar(self, usar_arquivo_aberto=False, selection=None):
+        caminho_final = None
+        resultado = None
         try:
             selection = selection or {}
             data_selecionada = selection.get("data")
@@ -389,21 +525,30 @@ class ProgramaRemoverPeriodo:
                 self.abrir_arquivo_navio(caminho=caminho_navio)
 
             if not self.ws:
-                return
+                return {"changed": False, "message": "Nenhuma planilha encontrada."}
+
+            print(f"Arquivo em uso para Remover Ponto: {self.caminho_navio}")
+            if self._caminho_navio_destino:
+                print(f"Destino final (rede): {self._caminho_navio_destino}")
+
+            caminho_final = Path(str(self._caminho_navio_destino or self.caminho_navio)).resolve()
 
             self.carregar_datas()
 
             data = data_selecionada if data_selecionada else self.escolher_data()
             if data not in self.datas:
-                raise Exception(f"Data invÃ¡lida para este arquivo: {data}")
+                raise Exception(f"Data invalida para este arquivo: {data}")
 
             periodo = periodo_selecionado if periodo_selecionado else self.escolher_periodo()
             if periodo not in self.MAPA_PERIODOS.values():
-                raise Exception(f"PerÃ­odo invÃ¡lido: {periodo}")
+                raise Exception(f"Periodo invalido: {periodo}")
 
-            self.remover_periodo(data, periodo)
+            resultado = self.remover_periodo(data, periodo)
 
-            self.salvar()
+            if resultado and resultado.get("changed"):
+                self.salvar()
+
+            return resultado
 
         finally:
             if not usar_arquivo_aberto:
@@ -413,8 +558,48 @@ class ProgramaRemoverPeriodo:
                     wb_cliente=self.wb_cliente
                 )
 
-    def salvar(self):
-        if self.wb:
-            self.wb.save()
-            print("ðŸ’¾ Arquivo salvo com sucesso")
+                # Write-through: copia o SaveCopyAs para o arquivo final na rede
+                if self._save_copy_path and caminho_final:
+                    try:
+                        shutil.copy2(self._save_copy_path, caminho_final)
+                        time.sleep(0.15)
+                        print(f"Write-through aplicado: {caminho_final}")
+                    finally:
+                        try:
+                            if Path(self._save_copy_path).exists():
+                                Path(self._save_copy_path).unlink()
+                        except Exception:
+                            pass
+                        self._save_copy_path = None
 
+                if self._caminho_navio_temp:
+                    try:
+                        p_temp = Path(self._caminho_navio_temp)
+                        if p_temp.exists():
+                            p_temp.unlink()
+                    except Exception:
+                        pass
+                    self._caminho_navio_temp = None
+
+    def salvar(self):
+        if not self.wb:
+            raise Exception("Nenhum workbook aberto para salvar")
+
+        try:
+            if bool(self.wb.api.ReadOnly):
+                raise PermissionError("Arquivo de trabalho abriu em SOMENTE LEITURA.")
+        except AttributeError:
+            pass
+
+        self.wb.api.Save()
+
+        # Gera copia fisica para write-through apos fechar o workbook
+        caminho_final = Path(str(self._caminho_navio_destino or self.caminho_navio or "")).resolve()
+        copy_name = f"remover_ponto_write_{caminho_final.stem}_{int(time.time() * 1000)}.xlsx"
+        caminho_copy = Path(gettempdir()) / copy_name
+        if caminho_copy.exists():
+            caminho_copy.unlink()
+        self.wb.api.SaveCopyAs(str(caminho_copy))
+        self._save_copy_path = str(caminho_copy)
+
+        print(f"Arquivo NAVIO salvo com sucesso em: {caminho_final}")
