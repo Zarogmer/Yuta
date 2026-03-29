@@ -1,4 +1,6 @@
 ﻿from datetime import date, datetime
+from pathlib import Path
+from tempfile import gettempdir
 
 import xlwings as xw
 
@@ -229,7 +231,148 @@ class ProgramaRemoverPeriodo:
 
         self.ws.api.Rows(linha).Delete()
 
-        print("âž– Linha removida e totais ajustados")
+        print("➡️ Linha removida e totais ajustados")
+
+
+    # ---------------------------
+    # Preview
+    # ---------------------------
+
+    def _detectar_area_util_preview(self, max_linhas_scan=1200, max_colunas_scan=180):
+        try:
+            used = self.ws.api.UsedRange
+            used_last_row = int(used.Row + used.Rows.Count - 1)
+            used_last_col = int(used.Column + used.Columns.Count - 1)
+        except Exception:
+            used_last_row = 200
+            used_last_col = 40
+
+        scan_rows = max(80, min(max_linhas_scan, used_last_row + 10))
+        scan_cols = max(20, min(max_colunas_scan, used_last_col + 6))
+
+        valores = self.ws.range((1, 1), (scan_rows, scan_cols)).value
+        if not isinstance(valores, list):
+            valores = [[valores]]
+        elif valores and not isinstance(valores[0], list):
+            valores = [valores]
+
+        ultima_linha = 1
+        ultima_coluna = 1
+        for i in range(scan_rows):
+            linha_vals = valores[i] if i < len(valores) else []
+            for j in range(scan_cols):
+                v = linha_vals[j] if j < len(linha_vals) else None
+                tem_valor = v not in (None, "")
+                if isinstance(v, str):
+                    tem_valor = v.strip() != ""
+                if tem_valor:
+                    ultima_linha = max(ultima_linha, i + 1)
+                    ultima_coluna = max(ultima_coluna, j + 1)
+
+        ultima_linha = min(ultima_linha + 2, scan_rows)
+        ultima_coluna = min(ultima_coluna + 1, scan_cols)
+        return max(ultima_linha, 1), max(ultima_coluna, 1)
+
+    def _export_preview_pdf(self):
+        if not self.ws:
+            return None
+
+        nome_base = Path(str(self.caminho_navio or "navio")).stem
+        caminho_pdf = Path(gettempdir()) / f"preview_desfazer_ponto_{nome_base}.pdf"
+        if caminho_pdf.exists():
+            caminho_pdf.unlink()
+
+        try:
+            ps = self.ws.api.PageSetup
+            xl_landscape = 2
+            xl_paper_a4 = 9
+
+            ultima_linha, ultima_coluna = self._detectar_area_util_preview(
+                max_linhas_scan=1200,
+                max_colunas_scan=180,
+            )
+            area = self.ws.api.Range(
+                self.ws.api.Cells(1, 1),
+                self.ws.api.Cells(ultima_linha, ultima_coluna),
+            )
+
+            ps.PrintArea = area.Address
+            ps.Orientation = xl_landscape
+            ps.PaperSize = xl_paper_a4
+            ps.Zoom = False
+            ps.FitToPagesWide = 1
+            ps.FitToPagesTall = False
+            ps.CenterHorizontally = True
+            ps.CenterVertically = False
+
+            self.ws.activate()
+            self.ws.api.ExportAsFixedFormat(
+                Type=0,
+                Filename=str(caminho_pdf),
+                Quality=0,
+                IncludeDocProperties=True,
+                IgnorePrintAreas=False,
+                OpenAfterPublish=False,
+            )
+            return str(caminho_pdf)
+        except Exception:
+            return None
+
+    def executar_preview(self, selection=None):
+        selection = selection or {}
+        data_selecionada = selection.get("data")
+        periodo_selecionado = selection.get("periodo")
+        caminho_navio = selection.get("caminho_navio")
+
+        if not caminho_navio:
+            raise Exception("Arquivo NAVIO nao informado para preview")
+
+        try:
+            self.abrir_arquivo_navio(caminho=caminho_navio)
+            self.carregar_datas()
+
+            linhas = [
+                "PRE-VISUALIZACAO",
+                "Processo: Desfazer Ponto",
+                f"Arquivo: {Path(caminho_navio).name}",
+                f"Total de datas no arquivo: {len(self.datas)}",
+            ]
+
+            if data_selecionada and periodo_selecionado:
+                periodo = periodo_selecionado
+                if periodo not in self.MAPA_PERIODOS.values():
+                    raise Exception(f"Periodo invalido: {periodo}")
+
+                linhas.append(f"Data: {data_selecionada}")
+                linhas.append(f"Periodo: {periodo}")
+
+                if data_selecionada not in self.datas:
+                    linhas.append("Status: data nao encontrada no arquivo")
+                elif not self.encontrar_linha_periodo(data_selecionada, periodo):
+                    linhas.append("Status: periodo nao existe nesta data (nada a remover)")
+                else:
+                    if self.is_dia_bloqueado(data_selecionada):
+                        linhas.append("Regra: domingo/feriado - remocao bloqueada.")
+                    else:
+                        linhas.append("Status: periodo encontrado, pronto para remover")
+            else:
+                linhas.append("Status: selecione data e periodo ao clicar em 'Executar'.")
+
+            return {
+                "text": "\n".join(linhas),
+                "preview_pdf": self._export_preview_pdf(),
+                "selection": {
+                    "caminho_navio": caminho_navio,
+                    "datas": list(self.datas or []),
+                },
+            }
+        finally:
+            fechar_workbooks(
+                app=self.app,
+                wb_navio=self.wb_navio,
+                wb_cliente=self.wb_cliente,
+            )
+
 
     # ---------------------------
     # ExecuÃ§Ã£o

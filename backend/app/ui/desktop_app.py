@@ -55,7 +55,6 @@ THEME = {
 
 class DesktopApp(tk.Tk):
     _LOCKED_MENU_KEYWORDS = (
-        "DESFAZER PONTO",
         "RELATORIO",
         "RELATORIO",
         "GERADOR NFS-E",
@@ -75,6 +74,8 @@ class DesktopApp(tk.Tk):
         self._menu_buttons_frame = None
         self._fazer_ponto_ctx = None
         self._fazer_ponto_form_vars = None
+        self._desfazer_ponto_ctx = None
+        self._desfazer_ponto_form_vars = None
         self._pending_action = None
         self._pending_label = None
         self._pending_selection = None
@@ -589,6 +590,10 @@ class DesktopApp(tk.Tk):
             self._render_form_fazer_ponto()
             return
 
+        if self._menu_modo == "desfazer_ponto":
+            self._render_form_desfazer_ponto()
+            return
+
         for item in self._menu_items():
             label = item["label"]
             label_norm = label.upper()
@@ -771,6 +776,93 @@ class DesktopApp(tk.Tk):
         if self._running:
             self._set_buttons_state("disabled")
 
+    def _render_form_desfazer_ponto(self):
+        frame = self._menu_buttons_frame
+
+        ttk.Label(frame, text="Desfazer Ponto", style="Section.TLabel").pack(anchor="w", padx=14, pady=(2, 8))
+
+        if not self._desfazer_ponto_ctx:
+            self._desfazer_ponto_form_vars = None
+            ttk.Label(
+                frame,
+                text="Selecione um arquivo para continuar.",
+                style="Sub.TLabel",
+            ).pack(anchor="w", padx=14, pady=(0, 8))
+
+            btn_arquivo = ttk.Button(frame, text="Selecionar Arquivo", style="Action.TButton", command=self._abrir_foco_desfazer_ponto)
+            btn_arquivo.pack(fill="x", padx=14, pady=4)
+            self._buttons.append(btn_arquivo)
+
+            btn_voltar = ttk.Button(frame, text="Voltar", style="Ghost.TButton", command=self._voltar_menu_principal)
+            btn_voltar.pack(fill="x", padx=14, pady=(4, 6))
+            self._buttons.append(btn_voltar)
+            return
+
+        datas = list(self._desfazer_ponto_ctx.get("datas") or [])
+        caminho_navio = str(self._desfazer_ponto_ctx.get("caminho_navio") or "")
+
+        ttk.Label(frame, text="Data", style="Sub.TLabel").pack(anchor="w", padx=14)
+        data_var = tk.StringVar(value=datas[0] if datas else "")
+        data_cb = ttk.Combobox(frame, textvariable=data_var, values=datas, state="readonly")
+        data_cb.pack(fill="x", padx=14, pady=(2, 8))
+
+        ttk.Label(frame, text="Periodo", style="Sub.TLabel").pack(anchor="w", padx=14)
+        periodo_var = tk.StringVar(value="06h")
+        periodo_cb = ttk.Combobox(frame, textvariable=periodo_var, values=["06h", "12h", "18h", "00h"], state="readonly")
+        periodo_cb.pack(fill="x", padx=14, pady=(2, 12))
+
+        self._desfazer_ponto_form_vars = {
+            "data_var": data_var,
+            "periodo_var": periodo_var,
+            "datas": datas,
+            "caminho_navio": caminho_navio,
+        }
+
+        def on_preview(auto=False):
+            data = data_var.get().strip()
+            periodo = periodo_var.get().strip()
+            if not data or not periodo:
+                if not auto:
+                    messagebox.showwarning("Dados incompletos", "Selecione data e periodo.", parent=self)
+                return
+
+            selecao = {
+                "caminho_navio": caminho_navio,
+                "datas": datas,
+                "data": data,
+                "periodo": periodo,
+            }
+            self._write_log(f"Desfazer Ponto: data={data} | periodo={periodo}\n", tag="info")
+            self._clear_pending_action()
+
+            def preview_action_inline(s=selecao):
+                result = ProgramaRemoverPeriodo(debug=True).executar_preview(selection=s)
+                if isinstance(result, dict):
+                    selection_preview = result.get("selection") or {}
+                    result["selection"] = {**selection_preview, **s}
+                return result
+
+            self._run_preview(
+                preview_action=preview_action_inline,
+                final_action=lambda selection=None: ProgramaRemoverPeriodo(debug=True).executar(selection=selection),
+                label="Desfazer Ponto",
+            )
+
+        btn_trocar = ttk.Button(frame, text="Trocar Arquivo", style="Ghost.TButton", command=self._abrir_foco_desfazer_ponto)
+        btn_trocar.pack(fill="x", padx=14, pady=(0, 0))
+        self._buttons.append(btn_trocar)
+
+        btn_voltar = ttk.Button(frame, text="Voltar", style="Ghost.TButton", command=self._voltar_menu_principal)
+        btn_voltar.pack(fill="x", padx=14, pady=(4, 6))
+        self._buttons.append(btn_voltar)
+
+        data_cb.focus_set()
+
+        on_preview(auto=True)
+
+        if self._running:
+            self._set_buttons_state("disabled")
+
     def _configure_tags(self):
         t = THEME
         self._log_text.tag_configure("info", foreground=t["fg_section"])
@@ -799,7 +891,8 @@ class DesktopApp(tk.Tk):
             },
             {
                 "label": "Desfazer Ponto",
-                "action": lambda selection=None: ProgramaRemoverPeriodo(debug=True).executar(selection=selection),
+                "action": self._abrir_foco_desfazer_ponto,
+                "menu_only": True,
             },
             {"label": "Faturamentos", "action": self._abrir_foco_faturamento, "menu_only": True},
             {
@@ -823,6 +916,7 @@ class DesktopApp(tk.Tk):
     def _voltar_menu_principal(self):
         self._menu_modo = "principal"
         self._fazer_ponto_form_vars = None
+        self._desfazer_ponto_form_vars = None
         self._render_menu_buttons()
 
     def _abrir_foco_criar_pasta(self):
@@ -866,6 +960,16 @@ class DesktopApp(tk.Tk):
             return
         self._fazer_ponto_ctx = ctx
         self._menu_modo = "fazer_ponto"
+        self._render_menu_buttons()
+
+    def _abrir_foco_desfazer_ponto(self):
+        ctx = self._obter_arquivo_e_datas(ProgramaRemoverPeriodo)
+        if not ctx:
+            if self._menu_modo not in ("desfazer_ponto",):
+                self._voltar_menu_principal()
+            return
+        self._desfazer_ponto_ctx = ctx
+        self._menu_modo = "desfazer_ponto"
         self._render_menu_buttons()
 
     def _item_faturamento_santos(self):
@@ -1456,6 +1560,29 @@ class DesktopApp(tk.Tk):
             }
             self._write_log(
                 f"Fazer Ponto: data={selection['data']} | periodo={selection['periodo']}\n",
+                tag="info",
+            )
+
+        if self._pending_label == "Desfazer Ponto":
+            form = self._desfazer_ponto_form_vars or {}
+
+            data_val = str((form.get("data_var").get() if form.get("data_var") else (selection or {}).get("data") or "")).strip()
+            periodo_val = str((form.get("periodo_var").get() if form.get("periodo_var") else (selection or {}).get("periodo") or "")).strip()
+
+            if not data_val or not periodo_val:
+                messagebox.showwarning("Dados incompletos", "Selecione data e periodo.", parent=self)
+                self._set_status("Operacao cancelada", busy=False)
+                return
+
+            selection = {
+                **(selection or {}),
+                "caminho_navio": str(form.get("caminho_navio") or (selection or {}).get("caminho_navio") or ""),
+                "datas": list(form.get("datas") or (selection or {}).get("datas") or []),
+                "data": data_val,
+                "periodo": periodo_val,
+            }
+            self._write_log(
+                f"Desfazer Ponto: data={selection['data']} | periodo={selection['periodo']}\n",
                 tag="info",
             )
 
