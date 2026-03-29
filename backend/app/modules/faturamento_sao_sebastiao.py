@@ -2130,13 +2130,8 @@ class FaturamentoSaoSebastiao:
             )
 
             nome_cliente = f"{cliente} - {porto}" if porto != "PADRAO" else cliente
-            nome_cliente_norm = cliente.strip().upper()
-            if nome_cliente_norm in ("ROCHAMAR", "CARGONAVE"):
-                anexos = [caminho_pdf]
-            else:
-                # Demais clientes: somente folhas OGMO (sem faturamento principal)
-                anexos = []
-            anexos.extend(self.caminhos_pdfs)
+            # Todos os clientes: somente folhas OGMO (sem faturamento principal)
+            anexos = list(self.caminhos_pdfs)
             try:
                 criar_rascunho_email_cliente(
                     nome_cliente,
