@@ -220,24 +220,19 @@ class ProgramaRemoverPeriodo:
                     if p == "00h":
                         return linha_acima
 
-        # Procura normal abaixo da data
-        i = linha_data + 1
-        while True:
-            valor_a = self.ws.range(f"A{i}").value
+        # Procura a partir da propria linha da data (periodo pode estar na mesma linha)
+        linha_total_dia = self.encontrar_total_data(linha_data)
+        limite = linha_total_dia if linha_total_dia else linha_data + 30
+
+        for i in range(linha_data, limite):
             valor_c = self.ws.range(f"C{i}").value
+            if not isinstance(valor_c, str):
+                continue
+            p = self.normalizar_periodo(valor_c)
+            if p == periodo:
+                return i
 
-            if isinstance(valor_a, str) and self.normalizar_texto(valor_a) == "totalgeral":
-                return None
-
-            if isinstance(valor_c, str):
-                p = self.normalizar_periodo(valor_c)
-                if p == periodo:
-                    return i
-
-                if self.normalizar_texto(valor_c) == "total":
-                    return None
-
-            i += 1
+        return None
 
     # ---------------------------
     # Contar periodos de um dia

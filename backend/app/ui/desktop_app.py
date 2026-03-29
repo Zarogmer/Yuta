@@ -678,7 +678,7 @@ class DesktopApp(tk.Tk):
     def _render_form_fazer_ponto(self):
         frame = self._menu_buttons_frame
 
-        ttk.Label(frame, text="Fazer Ponto", style="Section.TLabel").pack(anchor="w", padx=14, pady=(2, 8))
+        ttk.Label(frame, text="Adicionar Ponto", style="Section.TLabel").pack(anchor="w", padx=14, pady=(2, 8))
 
         if not self._fazer_ponto_ctx:
             self._fazer_ponto_form_vars = None
@@ -741,7 +741,7 @@ class DesktopApp(tk.Tk):
                 "data": data,
                 "periodo": periodo,
             }
-            self._write_log(f"Fazer Ponto: data={data} | periodo={periodo}\n", tag="info")
+            self._write_log(f"Adicionar Ponto: data={data} | periodo={periodo}\n", tag="info")
             self._clear_pending_action()
 
             def preview_action_inline(s=selecao):
@@ -754,7 +754,7 @@ class DesktopApp(tk.Tk):
             self._run_preview(
                 preview_action=preview_action_inline,
                 final_action=lambda selection=None: FazerPonto(debug=True).executar(selection=selection),
-                label="Fazer Ponto",
+                label="Adicionar Ponto",
             )
 
         # Nao regenera preview a cada clique em data/periodo para evitar sobrecarga.
@@ -885,7 +885,7 @@ class DesktopApp(tk.Tk):
         itens = [
             {"label": "Criar Pastas", "action": self._abrir_foco_criar_pasta, "menu_only": True},
             {
-                "label": "Fazer Ponto",
+                "label": "Adicionar Ponto",
                 "action": self._abrir_foco_fazer_ponto,
                 "menu_only": True,
             },
@@ -1301,7 +1301,7 @@ class DesktopApp(tk.Tk):
             item["action"]()
             return
 
-        if item["label"] == "Fazer Ponto":
+        if item["label"] == "Adicionar Ponto":
             selecao = self._pedir_dados_periodo(FazerPonto, item["label"], apenas_arquivo=True)
             if not selecao:
                 self._set_status("Operacao cancelada", busy=False)
@@ -1510,7 +1510,7 @@ class DesktopApp(tk.Tk):
         action = self._pending_action
         selection = self._pending_selection
 
-        if self._pending_label == "Fazer Ponto":
+        if self._pending_label == "Adicionar Ponto":
             form = self._fazer_ponto_form_vars or {}
             datas = list(form.get("datas") or (selection or {}).get("datas") or [])
 
@@ -1559,7 +1559,7 @@ class DesktopApp(tk.Tk):
                 "periodo": periodo_val,
             }
             self._write_log(
-                f"Fazer Ponto: data={selection['data']} | periodo={selection['periodo']}\n",
+                f"Adicionar Ponto: data={selection['data']} | periodo={selection['periodo']}\n",
                 tag="info",
             )
 
@@ -1790,7 +1790,7 @@ class DesktopApp(tk.Tk):
             if eh_fazer_ponto:
                 self._preview_zoom_max = 4.5
 
-                # Fazer Ponto: une paginas em uma imagem vertical unica.
+                # Adicionar Ponto: une paginas em uma imagem vertical unica.
                 if len(self._preview_pages) > 1:
                     merged = self._merge_preview_pages_vertically(self._preview_pages)
                     self._preview_pages = [self._trim_preview_image_whitespace(merged)]

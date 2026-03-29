@@ -857,7 +857,7 @@ class FazerPonto:
             if not usar_arquivo_aberto or not self.ws:
                 self.abrir_arquivo_navio(caminho=caminho_navio)
 
-            print(f"ðŸ“„ Arquivo em uso para Fazer Ponto: {self.caminho_navio}")
+            print(f"ðŸ“„ Arquivo em uso para Adicionar Ponto: {self.caminho_navio}")
             if self._caminho_navio_destino:
                 print(f"ðŸŽ¯ Destino final (rede): {self._caminho_navio_destino}")
 
@@ -1030,7 +1030,7 @@ class FazerPonto:
             caminho_pdf.unlink()
 
         try:
-            # Preview do Fazer Ponto: paisagem + area util real.
+            # Preview do Adicionar Ponto: paisagem + area util real.
             ps = self.ws.api.PageSetup
             xl_landscape = 2
             xl_paper_a4 = 9
@@ -1134,7 +1134,7 @@ class FazerPonto:
 
             linhas = [
                 "PRE-VISUALIZACAO",
-                "Processo: Fazer Ponto",
+                "Processo: Adicionar Ponto",
                 f"Arquivo: {Path(caminho_rede).name}",
                 f"Total de datas no arquivo: {len(self.datas)}",
             ]
