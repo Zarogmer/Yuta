@@ -333,7 +333,7 @@ class ProgramaRemoverPeriodo:
 
             linhas = [
                 "PRE-VISUALIZACAO",
-                "Processo: Desfazer Ponto",
+                "Processo: Remover Ponto",
                 f"Arquivo: {Path(caminho_navio).name}",
                 f"Total de datas no arquivo: {len(self.datas)}",
             ]

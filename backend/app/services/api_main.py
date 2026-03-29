@@ -45,7 +45,7 @@ if STATIC_DIR.exists():
 OPCOES_MENU = [
     "CRIAR PASTAS",
     "FAZER PONTO",
-    "DESFAZER PONTO - X",
+    "REMOVER PONTO",
     "FATURAMENTO (SANTOS)",
     "FATURAMENTO (ATIPICO)",
     "FATURAMENTO SAO SEBASTIAO",
@@ -64,7 +64,7 @@ def _executar_acao(indice: int) -> dict:
         return {"msg": "Fazer Ponto finalizado"}
     if indice == 2:
         ProgramaRemoverPeriodo(debug=True).executar()
-        return {"msg": "Desfazer Ponto finalizado"}
+        return {"msg": "Remover Ponto finalizado"}
     if indice == 3:
         FaturamentoCompleto().executar()
         return {"msg": "Faturamento (Santos) finalizado"}

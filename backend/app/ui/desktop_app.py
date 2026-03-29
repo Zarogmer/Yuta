@@ -779,7 +779,7 @@ class DesktopApp(tk.Tk):
     def _render_form_desfazer_ponto(self):
         frame = self._menu_buttons_frame
 
-        ttk.Label(frame, text="Desfazer Ponto", style="Section.TLabel").pack(anchor="w", padx=14, pady=(2, 8))
+        ttk.Label(frame, text="Remover Ponto", style="Section.TLabel").pack(anchor="w", padx=14, pady=(2, 8))
 
         if not self._desfazer_ponto_ctx:
             self._desfazer_ponto_form_vars = None
@@ -832,7 +832,7 @@ class DesktopApp(tk.Tk):
                 "data": data,
                 "periodo": periodo,
             }
-            self._write_log(f"Desfazer Ponto: data={data} | periodo={periodo}\n", tag="info")
+            self._write_log(f"Remover Ponto: data={data} | periodo={periodo}\n", tag="info")
             self._clear_pending_action()
 
             def preview_action_inline(s=selecao):
@@ -845,7 +845,7 @@ class DesktopApp(tk.Tk):
             self._run_preview(
                 preview_action=preview_action_inline,
                 final_action=lambda selection=None: ProgramaRemoverPeriodo(debug=True).executar(selection=selection),
-                label="Desfazer Ponto",
+                label="Remover Ponto",
             )
 
         btn_trocar = ttk.Button(frame, text="Trocar Arquivo", style="Ghost.TButton", command=self._abrir_foco_desfazer_ponto)
@@ -890,7 +890,7 @@ class DesktopApp(tk.Tk):
                 "menu_only": True,
             },
             {
-                "label": "Desfazer Ponto",
+                "label": "Remover Ponto",
                 "action": self._abrir_foco_desfazer_ponto,
                 "menu_only": True,
             },
@@ -1320,7 +1320,7 @@ class DesktopApp(tk.Tk):
             )
             return
 
-        if item["label"] == "Desfazer Ponto":
+        if item["label"] == "Remover Ponto":
             selecao = self._pedir_dados_periodo(ProgramaRemoverPeriodo, item["label"])
             if not selecao:
                 self._set_status("Operacao cancelada", busy=False)
@@ -1563,7 +1563,7 @@ class DesktopApp(tk.Tk):
                 tag="info",
             )
 
-        if self._pending_label == "Desfazer Ponto":
+        if self._pending_label == "Remover Ponto":
             form = self._desfazer_ponto_form_vars or {}
 
             data_val = str((form.get("data_var").get() if form.get("data_var") else (selection or {}).get("data") or "")).strip()
@@ -1582,7 +1582,7 @@ class DesktopApp(tk.Tk):
                 "periodo": periodo_val,
             }
             self._write_log(
-                f"Desfazer Ponto: data={selection['data']} | periodo={selection['periodo']}\n",
+                f"Remover Ponto: data={selection['data']} | periodo={selection['periodo']}\n",
                 tag="info",
             )
 
